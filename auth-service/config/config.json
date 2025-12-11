@@ -1,0 +1,16 @@
+{
+  "server": {
+    "port": "3001"
+  },
+  "database": {
+    "host": "postgres",
+    "port": "5432",
+    "user": "user",
+    "password": "password",
+    "dbname": "city_db"
+  },
+  "jwt": {
+    "secret": "cityconnect-poc-secret-key-2024",
+    "expiration_hours": 24
+  }
+}

@@ -1,0 +1,212 @@
+-- CityConnect Database Schema
+-- PostgreSQL initialization script
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- =====================
+-- USERS TABLE
+-- =====================
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL CHECK (
+        role IN (
+            'warga',
+            'admin_kebersihan',
+            'admin_kesehatan',
+            'admin_infrastruktur'
+        )
+    ),
+    department VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Index for faster email lookup
+CREATE INDEX idx_users_email ON users (email);
+
+CREATE INDEX idx_users_role ON users (role);
+
+-- =====================
+-- CATEGORIES TABLE
+-- =====================
+CREATE TABLE categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    department VARCHAR(100) NOT NULL
+);
+
+-- Index for department filtering
+CREATE INDEX idx_categories_department ON categories (department);
+
+-- =====================
+-- REPORTS TABLE
+-- =====================
+CREATE TABLE reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    category_id INTEGER REFERENCES categories (id),
+    location_lat DECIMAL(10, 8),
+    location_lng DECIMAL(11, 8),
+    photo_url TEXT,
+    privacy_level VARCHAR(20) NOT NULL CHECK (
+        privacy_level IN (
+            'public',
+            'private',
+            'anonymous'
+        )
+    ),
+    reporter_id UUID REFERENCES users (id), -- NULL for anonymous reports
+    reporter_hash VARCHAR(64), -- SHA-256 hash for anonymous reports (abuse detection)
+    status VARCHAR(50) DEFAULT 'pending' CHECK (
+        status IN (
+            'pending',
+            'accepted',
+            'in_progress',
+            'completed',
+            'rejected'
+        )
+    ),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Indexes for common queries
+CREATE INDEX idx_reports_category ON reports (category_id);
+
+CREATE INDEX idx_reports_status ON reports (status);
+
+CREATE INDEX idx_reports_reporter ON reports (reporter_id);
+
+CREATE INDEX idx_reports_created ON reports (created_at DESC);
+
+-- =====================
+-- SEED DATA - Categories
+-- =====================
+INSERT INTO
+    categories (name, department)
+VALUES (
+        'Kebersihan Jalan',
+        'kebersihan'
+    ),
+    (
+        'Sampah Menumpuk',
+        'kebersihan'
+    ),
+    (
+        'Saluran Air Tersumbat',
+        'kebersihan'
+    ),
+    ('Wabah Penyakit', 'kesehatan'),
+    (
+        'Klinik Kurang Fasilitas',
+        'kesehatan'
+    ),
+    ('Vaksinasi', 'kesehatan'),
+    (
+        'Jalan Rusak',
+        'infrastruktur'
+    ),
+    (
+        'Lampu Jalan Mati',
+        'infrastruktur'
+    ),
+    (
+        'Jembatan Rusak',
+        'infrastruktur'
+    );
+
+-- =====================
+-- SEED DATA - Demo Users
+-- Password: 'password123' (bcrypt hash)
+-- =====================
+INSERT INTO
+    users (
+        id,
+        email,
+        password_hash,
+        name,
+        role,
+        department
+    )
+VALUES (
+        '11111111-1111-1111-1111-111111111111',
+        'warga@test.com',
+        '$2a$12$pWAZ3QeIFtafoCTTZ4hkQezmUYPy5NSndf3XDSMKAJWd7ol9uQtEq',
+        'Budi Warga',
+        'warga',
+        NULL
+    ),
+    (
+        '22222222-2222-2222-2222-222222222222',
+        'admin_kebersihan@test.com',
+        '$2a$12$pWAZ3QeIFtafoCTTZ4hkQezmUYPy5NSndf3XDSMKAJWd7ol9uQtEq',
+        'Admin Kebersihan',
+        'admin_kebersihan',
+        'kebersihan'
+    ),
+    (
+        '33333333-3333-3333-3333-333333333333',
+        'admin_kesehatan@test.com',
+        '$2a$12$pWAZ3QeIFtafoCTTZ4hkQezmUYPy5NSndf3XDSMKAJWd7ol9uQtEq',
+        'Admin Kesehatan',
+        'admin_kesehatan',
+        'kesehatan'
+    ),
+    (
+        '44444444-4444-4444-4444-444444444444',
+        'admin_infrastruktur@test.com',
+        '$2a$12$pWAZ3QeIFtafoCTTZ4hkQezmUYPy5NSndf3XDSMKAJWd7ol9uQtEq',
+        'Admin Infrastruktur',
+        'admin_infrastruktur',
+        'infrastruktur'
+    );
+
+-- =====================
+-- SEED DATA - Sample Reports
+-- =====================
+INSERT INTO
+    reports (
+        id,
+        title,
+        description,
+        category_id,
+        location_lat,
+        location_lng,
+        privacy_level,
+        reporter_id,
+        status
+    )
+VALUES (
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'Sampah menumpuk di Jalan Merdeka',
+        'Sudah 3 hari tidak diangkut',
+        2,
+        -6.2088,
+        106.8456,
+        'public',
+        '11111111-1111-1111-1111-111111111111',
+        'pending'
+    ),
+    (
+        'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        'Jalan berlubang berbahaya',
+        'Lubang besar di depan pasar',
+        7,
+        -6.2100,
+        106.8500,
+        'public',
+        '11111111-1111-1111-1111-111111111111',
+        'in_progress'
+    );
+
+COMMENT ON TABLE users IS 'User accounts for CityConnect - warga and admin dinas';
+
+COMMENT ON TABLE categories IS 'Report categories mapped to departments';
+
+COMMENT ON TABLE reports IS 'Citizen reports with privacy levels';
