@@ -72,6 +72,7 @@ CREATE TABLE reports (
             'rejected'
         )
     ),
+    vote_score INTEGER DEFAULT 0, -- Net score (upvotes - downvotes)
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -84,6 +85,45 @@ CREATE INDEX idx_reports_status ON reports (status);
 CREATE INDEX idx_reports_reporter ON reports (reporter_id);
 
 CREATE INDEX idx_reports_created ON reports (created_at DESC);
+
+CREATE INDEX idx_reports_vote_score ON reports (vote_score DESC);
+
+-- =====================
+-- REPORT VOTES TABLE
+-- =====================
+-- Tracks individual votes to prevent duplicates and enable vote changes
+CREATE TABLE report_votes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+    report_id UUID NOT NULL REFERENCES reports (id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    vote_type VARCHAR(10) NOT NULL CHECK (vote_type IN ('upvote', 'downvote')),
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE (report_id, user_id) -- One vote per user per report
+);
+
+CREATE INDEX idx_report_votes_report ON report_votes (report_id);
+
+CREATE INDEX idx_report_votes_user ON report_votes (user_id);
+
+-- =====================
+-- NOTIFICATIONS TABLE
+-- =====================
+-- Persistent notifications for status updates
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid (),
+    user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    report_id UUID REFERENCES reports (id) ON DELETE SET NULL,
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_notifications_user ON notifications (user_id);
+
+CREATE INDEX idx_notifications_unread ON notifications (user_id, is_read)
+WHERE
+    is_read = FALSE;
 
 -- =====================
 -- SEED DATA - Categories
