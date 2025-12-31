@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # --- API GATEWAY (Nginx) ---
+  # API GATEWAY
   gateway:
     image: nginx:alpine
     ports:
@@ -30,12 +28,12 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- REPORT SERVICE (Go) ---
+  #REPORT SERVICE
   report-service:
     build: ./report-service
     container_name: report-service
     ports:
-      - "3002:3002"  # Debug only
+      - "3002:3002"
     environment:
       - PORT=3002
     depends_on:
@@ -45,7 +43,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- DATABASE (PostgreSQL) ---
+  # DATABASE
   postgres:
     image: postgres:15-alpine
     container_name: postgres
@@ -57,7 +55,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "5432:5432"  # Debug only
+      - "${DB_PORT_OUT}:5432"
     networks:
       - app-network
     healthcheck:
