@@ -1,354 +1,227 @@
-# CityConnect - Sistem Pelaporan Warga Terdistribusi
+# CityConnect - Sistem Pelaporan Warga
 
-Proof-of-Concept (PoC) untuk sistem pelaporan warga dengan arsitektur microservices. Sistem ini memungkinkan warga kota (target: 2.5 juta penduduk) untuk melaporkan permasalahan lingkungan kepada pihak berwenang.
-
-## Arsitektur Sistem
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                                   FRONTEND                                       │
-│                              Next.js (React)                                     │
-│   ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐           │
-│   │  Citizen Dashboard │  │  Public Reports   │  │   Govt Dashboard  │           │
-│   │  - My Reports      │  │  - Browse Reports │  │  - View Reports   │           │
-│   │  - Create Report   │  │  - Vote Reports   │  │  - Change Status  │           │
-│   │  - Edit Report     │  │  - View Details   │  │  - Dept Filtered  │           │
-│   │  - Track Status    │  │                   │  │                   │           │
-│   └───────────────────┘  └───────────────────┘  └───────────────────┘           │
-└─────────────────────────────────────┬───────────────────────────────────────────┘
-                                      │ HTTPS
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              API GATEWAY (Nginx)                                 │
-│                              Port: 8080                                          │
-│   - Reverse proxy to backend services                                            │
-│   - Rate limiting (future)                                                       │
-│   - SSL termination (production)                                                 │
-└──────────┬──────────────────────┬──────────────────────┬────────────────────────┘
-           │                      │                      │
-           ▼                      ▼                      ▼
-┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
-│   AUTH SERVICE   │   │  REPORT SERVICE  │   │ NOTIFICATION SVC │
-│      (Go)        │   │      (Go)        │   │      (Go)        │
-│   Port: 3001     │   │   Port: 3002     │   │   Port: 3003     │
-├──────────────────┤   ├──────────────────┤   ├──────────────────┤
-│ - Register       │   │ - CRUD Reports   │   │ - SSE Endpoint   │
-│ - Login (JWT)    │   │ - Vote System    │   │ - Notify on      │
-│ - Token Verify   │   │ - Status Update  │   │   status change  │
-│ - RBAC           │   │ - Dept Filtering │   │ - Store in DB    │
-└────────┬─────────┘   └────────┬─────────┘   └────────┬─────────┘
-         │                      │                      │
-         └──────────────────────┴──────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              PostgreSQL Database                                 │
-│                              Port: 5432                                          │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│ Tables:                                                                          │
-│   - users           (id, email, password_hash, name, role, department)          │
-│   - categories      (id, name, department)                                       │
-│   - reports         (id, title, description, category_id, location, privacy,    │
-│                      reporter_id, reporter_hash, status, vote_score, ...)       │
-│   - report_votes    (id, report_id, user_id, vote_type, created_at)             │
-│   - notifications   (id, user_id, report_id, message, is_read, created_at)      │
-└─────────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           OBSERVABILITY STACK                                    │
-├─────────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                          │
-│  │   Grafana   │◄───│    Loki     │◄───│  Promtail   │                          │
-│  │  Port: 3000 │    │  Port: 3100 │    │  (sidecar)  │                          │
-│  │             │    │             │    │             │                          │
-│  │ Dashboards  │    │ Log Storage │    │ Log Shipper │                          │
-│  └─────────────┘    └─────────────┘    └─────────────┘                          │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
-
-## Fitur Fungsional
-
-### Untuk Warga (Citizen)
-
-| Fitur | Deskripsi |
-|-------|-----------|
-| **Registrasi & Login** | Autentikasi berbasis JWT |
-| **Buat Laporan** | Laporan dengan judul, deskripsi, kategori, lokasi |
-| **Privacy Levels** | Public (semua bisa lihat), Private (hanya pelapor & dinas), Anonymous (identitas disembunyikan) |
-| **Kelola Laporan** | Lihat, edit laporan sendiri |
-| **Lacak Status** | Lihat progress penyelesaian laporan |
-| **Upvote/Downvote** | Vote laporan publik (termasuk laporan sendiri) |
-| **Notifikasi** | Real-time notification via SSE saat status laporan berubah |
-
-### Untuk Pemerintah (Government Admin)
-
-| Fitur | Deskripsi |
-|-------|-----------|
-| **Login dengan Role** | `admin_kebersihan`, `admin_kesehatan`, `admin_infrastruktur` |
-| **Lihat Laporan Departemen** | Hanya laporan sesuai kewenangan department |
-| **Ubah Status Laporan** | `pending` → `accepted` → `in_progress` → `completed` / `rejected` |
-| **Privasi Pelapor** | Identitas pelapor disembunyikan untuk laporan anonymous |
-| **Tidak Bisa Hapus** | Laporan tidak dapat dihapus untuk audit trail |
-
-## Privacy Levels Explained
-
-| Level | Visibility | Reporter Identity |
-|-------|------------|-------------------|
-| `public` | Semua warga & dinas terkait | Terlihat oleh semua |
-| `private` | Hanya pelapor & dinas terkait | Terlihat oleh dinas |
-| `anonymous` | Hanya pelapor & dinas terkait | **Disembunyikan** (hashed) |
-
-## Tech Stack
-
-| Komponen | Teknologi | Alasan Pemilihan |
-|----------|-----------|------------------|
-| **API Gateway** | Nginx | Lightweight, proven performance, native reverse proxy |
-| **Backend Services** | Go (Gin) | High performance, low memory footprint, excellent concurrency |
-| **Frontend** | Next.js (React) | SSR support, built-in routing, optimal for SEO & performance |
-| **Database** | PostgreSQL | ACID compliance, JSONB support, mature & reliable |
-| **Real-time** | SSE (Server-Sent Events) | Simpler than WebSocket for one-way server→client push |
-| **Authentication** | JWT | Stateless, scalable, standard for microservices |
-| **Logging** | Loki + Promtail | Lightweight log aggregation, Grafana-native |
-| **Visualization** | Grafana | Unified dashboard for logs & metrics |
-
-## Component Interactions
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                         REQUEST FLOWS                                   │
-└────────────────────────────────────────────────────────────────────────┘
-
-1. USER REGISTRATION/LOGIN
-   Client → Gateway → Auth Service → PostgreSQL
-                   ← JWT Token ←
-
-2. CREATE REPORT
-   Client (+ JWT) → Gateway → [Validate JWT via Auth] 
-                           → Report Service → PostgreSQL
-                           → Notification Service (if applicable)
-
-3. GOVERNMENT VIEW REPORTS
-   Client (+ JWT) → Gateway → [Validate JWT + Check Role]
-                           → Report Service (filter by department)
-                           ← Reports (reporter identity stripped if anonymous)
-
-4. VOTE ON REPORT
-   Client (+ JWT) → Gateway → Report Service
-                           → Check duplicate vote in report_votes
-                           → Update vote_score in reports
-                           ← Updated score
-
-5. STATUS UPDATE (triggers notification)
-   Govt Client → Gateway → Report Service
-                        → Update status in PostgreSQL
-                        → Insert notification in notifications table
-                        → SSE push to connected clients
-
-6. RECEIVE NOTIFICATIONS (SSE)
-   Client (+ JWT) → Gateway → Notification Service
-                           ← SSE stream (persistent connection)
-                           ← Events pushed when status changes
-```
-
-## Database Schema Overview
-
-```sql
--- Core tables
-users           -- User accounts with roles
-categories      -- Report categories mapped to departments  
-reports         -- Citizen reports with privacy levels
-
--- New tables (to be implemented)
-report_votes    -- Track votes per user to prevent duplicates
-notifications   -- Persistent notification storage
-```
+Platform pelaporan masalah lingkungan berbasis microservices untuk warga kota.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Docker & Docker Compose
-- Node.js 18+ (for frontend development)
 - Git
 
-### Run All Services
+### Setup & Run
 
 ```bash
-# Build and start all containers
-docker-compose up --build
+# 1. Clone repository
+git clone <repository-url>
+cd Tubes-AAT
 
-# Or run in background
+# 2. Copy environment file
+cp .env.example .env
+
+# 3. Build and start all services
 docker-compose up -d --build
+
+# 4. Wait for services to be healthy (~30 seconds)
+docker-compose ps
 ```
 
-### Endpoints
+### Access Points
 
-| Service | Endpoint | Description |
-|---------|----------|-------------|
-| Gateway | <http://localhost:8080> | API Gateway |
-| Auth | <http://localhost:8080/api/v1/auth/> | Authentication |
-| Reports | <http://localhost:8080/api/v1/reports/> | Report Management |
-| Notifications | <http://localhost:8080/api/v1/notifications/> | SSE Notifications |
-| Grafana | <http://localhost:3000> | Observability Dashboard |
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| **Frontend** | <http://localhost:8080> | — |
+| **API Gateway** | <http://localhost:8080/api/v1> | — |
+| **Grafana** | <http://localhost:3050> | admin / admin |
 
-## API Documentation
-
-### Auth Service
-
-#### Register User
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "warga@example.com",
-    "password": "password123",
-    "name": "Budi Warga",
-    "role": "warga"
-  }'
-```
-
-Available roles:
-
-- `warga` - Citizen (default)
-- `admin_kebersihan` - Sanitation Department
-- `admin_kesehatan` - Health Department
-- `admin_infrastruktur` - Infrastructure Department
-
-#### Login
-
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "warga@example.com",
-    "password": "password123"
-  }'
-```
-
-### Report Service
-
-#### Create Report
-
-```bash
-curl -X POST http://localhost:8080/api/v1/reports/ \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "title": "Sampah menumpuk",
-    "description": "Di Jalan X sudah 3 hari",
-    "category_id": 2,
-    "location_lat": -6.2088,
-    "location_lng": 106.8456,
-    "privacy_level": "public"
-  }'
-```
-
-#### Get Public Reports (with vote scores)
-
-```bash
-curl http://localhost:8080/api/v1/reports/public
-```
-
-#### Vote on Report
-
-```bash
-curl -X POST http://localhost:8080/api/v1/reports/<report_id>/vote \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"vote_type": "upvote"}'  # or "downvote"
-```
-
-#### Update Report Status (Government only)
-
-```bash
-curl -X PATCH http://localhost:8080/api/v1/reports/<report_id>/status \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "in_progress"}'
-```
-
-### Notification Service
-
-#### Connect to SSE Stream
-
-```bash
-curl -N http://localhost:8080/api/v1/notifications/stream \
-  -H "Authorization: Bearer <TOKEN>"
-```
-
-#### Get Notification History
-
-```bash
-curl http://localhost:8080/api/v1/notifications/ \
-  -H "Authorization: Bearer <TOKEN>"
-```
-
-## Security Features
-
-- **JWT Authentication** - Stateless token-based auth
-- **RBAC** - Role-Based Access Control per department
-- **Anonymous Reporting** - SHA-256 hashed reporter ID (irreversible)
-- **Department Isolation** - Admin only sees relevant department data
-- **Audit Trail** - Reports cannot be deleted
-
-## Demo Users (Seed Data)
+## Demo Accounts
 
 | Email | Password | Role |
 |-------|----------|------|
-| <warga@test.com> | password123 | warga |
-| <admin_kebersihan@test.com> | password123 | admin_kebersihan |
-| <admin_kesehatan@test.com> | password123 | admin_kesehatan |
-| <admin_infrastruktur@test.com> | password123 | admin_infrastruktur |
+| <warga@test.com> | password123 | Citizen |
+| <admin_kebersihan@test.com> | password123 | Admin Kebersihan |
+| <admin_kesehatan@test.com> | password123 | Admin Kesehatan |
+| <admin_infrastruktur@test.com> | password123 | Admin Infrastruktur |
+
+## Features
+
+### For Citizens (Warga)
+
+- ✅ Register & Login with JWT authentication
+- ✅ Create reports with public/private/anonymous privacy levels
+- ✅ Search and filter reports by keyword and category
+- ✅ Upvote/downvote public reports
+- ✅ Real-time notifications via SSE when report status changes
+- ✅ Create custom categories for reports
+
+### For Government Admins
+
+- ✅ View reports filtered by department
+- ✅ Update report status (pending → accepted → in_progress → completed/rejected)
+- ✅ Reports cannot be deleted (audit trail)
+- ✅ Anonymous reporter identity hidden
+
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────────────────────────────────┐
+│   Frontend  │────▶│           Nginx Gateway (:8080)         │
+│  (Next.js)  │     │  - JWT validation via auth_request      │
+└─────────────┘     │  - Route to backend services            │
+                    └────────┬───────────────┬────────────────┘
+                             │               │
+                    ┌────────▼───────┐ ┌─────▼────────┐
+                    │  Auth Service  │ │ Report Service│
+                    │   (Go :3001)   │ │   (Go :3002)  │
+                    │  - Register    │ │  - CRUD       │
+                    │  - Login       │ │  - Voting     │
+                    │  - JWT         │ │  - SSE Notif  │
+                    └────────┬───────┘ └──────┬────────┘
+                             │                │
+                             └───────┬────────┘
+                                     ▼
+                            ┌────────────────┐
+                            │   PostgreSQL   │
+                            │    (:5432)     │
+                            └────────────────┘
+```
+
+## API Endpoints
+
+### Authentication
+
+```bash
+# Register
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"pass123","name":"User","role":"warga"}'
+
+# Login
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"pass123"}'
+```
+
+### Reports
+
+```bash
+# Get public reports (with search)
+curl "http://localhost:8080/api/v1/reports/public?search=jalan&category_id=7"
+
+# Create report (requires token)
+curl -X POST http://localhost:8080/api/v1/reports/ \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Title","description":"Desc","category_id":7,"privacy_level":"public"}'
+
+# Vote on report
+curl -X POST http://localhost:8080/api/v1/reports/<ID>/vote \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{"vote_type":"upvote"}'
+
+# Update status (admin only)
+curl -X PATCH http://localhost:8080/api/v1/reports/<ID>/status \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{"status":"in_progress"}'
+```
+
+### Notifications
+
+```bash
+# Get notifications
+curl http://localhost:8080/api/v1/notifications \
+  -H "Authorization: Bearer <TOKEN>"
+
+# SSE stream
+curl -N http://localhost:8080/api/v1/notifications/stream \
+  -H "Authorization: Bearer <TOKEN>"
+```
 
 ## Project Structure
 
 ```
 Tubes-AAT/
-├── auth-service/           # Authentication microservice (Go)
-│   ├── internal/
-│   │   ├── handler/        # HTTP handlers
-│   │   ├── model/          # Data models
-│   │   ├── repository/     # Database access
-│   │   └── service/        # Business logic
-│   ├── config/
-│   ├── main.go
-│   └── Dockerfile
-├── report-service/         # Report management microservice (Go)
-│   ├── internal/
-│   │   ├── handler/
-│   │   ├── model/
-│   │   ├── repository/
-│   │   └── service/
-│   ├── config/
-│   ├── main.go
-│   └── Dockerfile
-├── notification-service/   # SSE notification service (Go) [TO BE IMPLEMENTED]
-├── frontend/               # Next.js application [TO BE IMPLEMENTED]
-├── gateway/
-│   └── nginx.conf          # API Gateway configuration
-├── observability/          # Loki + Grafana config [TO BE IMPLEMENTED]
-│   ├── loki/
-│   ├── promtail/
-│   └── grafana/
-├── database/
-│   └── init.sql            # Database schema & seed data
-├── scripts/
-│   ├── test-api.sh
-│   └── test-api.ps1
-├── docs/
-│   └── Spesifikasi.pdf     # Original specification
+├── auth-service/          # Authentication service (Go)
+├── report-service/        # Report & notification service (Go)
+├── frontend/              # Next.js frontend
+├── gateway/               # Nginx configuration
+├── database/              # SQL schema & seed data
+├── observability/         # Loki/Grafana/Promtail config
+├── scripts/               # Utility scripts
 ├── docker-compose.yml
-└── go.work
+├── .env.example
+└── README.md
 ```
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```env
+# Database
+DB_HOST=postgres
+DB_PORT=5432
+DB_USER=cityconnect
+DB_PASSWORD=cityconnect_secret
+DB_NAME=cityconnect
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-change-in-production
+
+# Configuration
+CONFIG_PATH=/app/config.json
+```
+
+## Development
+
+### Run individual services
+
+```bash
+# Backend only
+docker-compose up -d postgres auth-service report-service gateway
+
+# Frontend development (with hot reload)
+cd frontend && npm install && npm run dev
+```
+
+### Rebuild after changes
+
+```bash
+# Rebuild specific service
+docker-compose build --no-cache report-service
+docker-compose up -d report-service
+
+# Rebuild all
+docker-compose up -d --build
+```
+
+### View logs
+
+```bash
+docker-compose logs -f report-service
+docker-compose logs -f auth-service
+```
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Gateway | Nginx |
+| Backend | Go (Gin) |
+| Frontend | Next.js 14 |
+| Database | PostgreSQL 15 |
+| Real-time | SSE |
+| Auth | JWT |
+| Logging | Loki + Promtail |
+| Dashboard | Grafana |
 
 ## Known Limitations (PoC)
 
-- Password in seed data uses hardcoded hash
-- JWT secret stored in config file (production: use env/vault)
-- No rate limiting implemented yet
-- No horizontal scaling configuration (single instance per service)
+- JWT secret in config (use vault in production)
+- No rate limiting
+- Single instance per service (no horizontal scaling)
+- Observability stack not yet configured for production
 
 ## License
 
-Educational Project - Tugas Kuliah AAT
+Educational Project - Tugas Kuliah AAT 2024

@@ -1,5 +1,5 @@
 services:
-  # API GATEWAY
+  # --- API GATEWAY (Nginx) ---
   gateway:
     image: nginx:alpine
     ports:
@@ -9,6 +9,7 @@ services:
     depends_on:
       - auth-service
       - report-service
+      - frontend
     networks:
       - app-network
     restart: unless-stopped
@@ -18,7 +19,7 @@ services:
     build: ./auth-service
     container_name: auth-service
     ports:
-      - "3001:3001"  # Debug only, tutup di production
+      - "3001:3001"
     environment:
       - PORT=3001
     depends_on:
@@ -28,7 +29,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  #REPORT SERVICE
+  # --- REPORT SERVICE (Go) ---
   report-service:
     build: ./report-service
     container_name: report-service
@@ -43,7 +44,19 @@ services:
       - app-network
     restart: unless-stopped
 
-  # DATABASE
+  # --- FRONTEND (Next.js) ---
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # --- DATABASE (PostgreSQL) ---
   postgres:
     image: postgres:15-alpine
     container_name: postgres
@@ -55,7 +68,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "${DB_PORT_OUT}:5432"
+      - "${DB_PORT_OUT:-5433}:5432"
     networks:
       - app-network
     healthcheck:
@@ -65,9 +78,57 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # --- OBSERVABILITY STACK ---
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/tmp/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: promtail
+    volumes:
+      - ./observability/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    ports:
+      - "3050:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - loki
+    networks:
+      - app-network
+    restart: unless-stopped
+
 networks:
   app-network:
     driver: bridge
 
 volumes:
   postgres_data:
+  loki_data:
+  grafana_data:
