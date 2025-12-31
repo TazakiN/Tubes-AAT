@@ -42,10 +42,15 @@ func (r *ReportRepository) Create(report *model.Report) error {
 	return err
 }
 
+// Returns the database connection for transaction usage.
+func (r *ReportRepository) GetDB() *sql.DB {
+	return r.db
+}
+
 func (r *ReportRepository) FindByID(id uuid.UUID) (*model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
-			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.created_at, r.updated_at,
+			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
 			c.id, c.name, c.department
 		FROM reports r
 		JOIN categories c ON r.category_id = c.id
@@ -67,6 +72,7 @@ func (r *ReportRepository) FindByID(id uuid.UUID) (*model.Report, error) {
 		&report.PrivacyLevel,
 		&reporterID,
 		&report.Status,
+		&report.VoteScore,
 		&report.CreatedAt,
 		&report.UpdatedAt,
 		&report.Category.ID,
@@ -97,7 +103,7 @@ func (r *ReportRepository) FindByID(id uuid.UUID) (*model.Report, error) {
 	return report, nil
 }
 
-// FindAll returns reports filtered by department (for admin) or all public reports (for warga)
+// Returns reports filtered by department (for admin) or all public reports (for warga).
 func (r *ReportRepository) FindAll(userRole string, department *string) ([]model.Report, error) {
 	var query string
 	var args []interface{}
@@ -107,7 +113,7 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 	if userRole == "warga" {
 		query = `
 			SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
-				r.photo_url, r.privacy_level, r.reporter_id, r.status, r.created_at, r.updated_at,
+				r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
 				c.id, c.name, c.department
 			FROM reports r
 			JOIN categories c ON r.category_id = c.id
@@ -118,7 +124,7 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 		// Admin hanya bisa lihat laporan di departemennya
 		query = `
 			SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
-				r.photo_url, r.privacy_level, r.reporter_id, r.status, r.created_at, r.updated_at,
+				r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
 				c.id, c.name, c.department
 			FROM reports r
 			JOIN categories c ON r.category_id = c.id
@@ -154,6 +160,7 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 			&report.PrivacyLevel,
 			&reporterID,
 			&report.Status,
+			&report.VoteScore,
 			&report.CreatedAt,
 			&report.UpdatedAt,
 			&report.Category.ID,
@@ -184,11 +191,11 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 	return reports, nil
 }
 
-// FindByReporterID returns reports created by a specific user
+// Returns all reports created by a specific user.
 func (r *ReportRepository) FindByReporterID(reporterID uuid.UUID) ([]model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
-			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.created_at, r.updated_at,
+			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
 			c.id, c.name, c.department
 		FROM reports r
 		JOIN categories c ON r.category_id = c.id
@@ -220,6 +227,7 @@ func (r *ReportRepository) FindByReporterID(reporterID uuid.UUID) ([]model.Repor
 			&report.PrivacyLevel,
 			&reporterIDNull,
 			&report.Status,
+			&report.VoteScore,
 			&report.CreatedAt,
 			&report.UpdatedAt,
 			&report.Category.ID,
@@ -279,4 +287,336 @@ func (r *ReportRepository) GetCategoryByID(id int) (*model.Category, error) {
 		return nil, err
 	}
 	return cat, nil
+}
+
+// Returns all public reports with vote scores, ordered by score then creation time.
+func (r *ReportRepository) GetPublicReports() ([]model.Report, error) {
+	query := `
+		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
+			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
+			c.id, c.name, c.department,
+			u.name as reporter_name
+		FROM reports r
+		JOIN categories c ON r.category_id = c.id
+		LEFT JOIN users u ON r.reporter_id = u.id
+		WHERE r.privacy_level = 'public'
+		ORDER BY r.vote_score DESC, r.created_at DESC
+	`
+
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reports []model.Report
+	for rows.Next() {
+		report := model.Report{Category: &model.Category{}}
+		var lat, lng sql.NullFloat64
+		var photoURL sql.NullString
+		var reporterID sql.NullString
+		var reporterName sql.NullString
+
+		err := rows.Scan(
+			&report.ID,
+			&report.Title,
+			&report.Description,
+			&report.CategoryID,
+			&lat,
+			&lng,
+			&photoURL,
+			&report.PrivacyLevel,
+			&reporterID,
+			&report.Status,
+			&report.VoteScore,
+			&report.CreatedAt,
+			&report.UpdatedAt,
+			&report.Category.ID,
+			&report.Category.Name,
+			&report.Category.Department,
+			&reporterName,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if lat.Valid {
+			report.LocationLat = &lat.Float64
+		}
+		if lng.Valid {
+			report.LocationLng = &lng.Float64
+		}
+		if photoURL.Valid {
+			report.PhotoURL = &photoURL.String
+		}
+		if reporterID.Valid {
+			uid, _ := uuid.Parse(reporterID.String)
+			report.ReporterID = &uid
+		}
+		if reporterName.Valid {
+			report.ReporterName = &reporterName.String
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// Dynamically updates title and/or description fields on a report.
+func (r *ReportRepository) Update(id uuid.UUID, title, description *string) error {
+	// Build dynamic query based on what fields are provided
+	query := `UPDATE reports SET updated_at = NOW()`
+	args := []interface{}{}
+	argIndex := 1
+
+	if title != nil {
+		query += fmt.Sprintf(", title = $%d", argIndex)
+		args = append(args, *title)
+		argIndex++
+	}
+	if description != nil {
+		query += fmt.Sprintf(", description = $%d", argIndex)
+		args = append(args, *description)
+		argIndex++
+	}
+
+	query += fmt.Sprintf(" WHERE id = $%d", argIndex)
+	args = append(args, id)
+
+	result, err := r.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("report not found")
+	}
+
+	return nil
+}
+
+// Returns all categories ordered by department and name.
+func (r *ReportRepository) GetAllCategories() ([]model.Category, error) {
+	query := `SELECT id, name, department FROM categories ORDER BY department, name`
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var categories []model.Category
+	for rows.Next() {
+		var cat model.Category
+		if err := rows.Scan(&cat.ID, &cat.Name, &cat.Department); err != nil {
+			return nil, err
+		}
+		categories = append(categories, cat)
+	}
+	return categories, nil
+}
+
+// Performs full-text search on public reports with optional category filtering.
+func (r *ReportRepository) SearchPublicReports(search string, categoryID *int) ([]model.Report, error) {
+	query := `
+		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
+			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
+			c.id, c.name, c.department,
+			u.name as reporter_name
+		FROM reports r
+		JOIN categories c ON r.category_id = c.id
+		LEFT JOIN users u ON r.reporter_id = u.id
+		WHERE r.privacy_level = 'public'
+	`
+	args := []interface{}{}
+	argIndex := 1
+
+	if search != "" {
+		query += fmt.Sprintf(" AND (LOWER(r.title) LIKE LOWER($%d) OR LOWER(r.description) LIKE LOWER($%d))", argIndex, argIndex)
+		args = append(args, "%"+search+"%")
+		argIndex++
+	}
+
+	if categoryID != nil && *categoryID > 0 {
+		query += fmt.Sprintf(" AND r.category_id = $%d", argIndex)
+		args = append(args, *categoryID)
+		argIndex++
+	}
+
+	query += " ORDER BY r.vote_score DESC, r.created_at DESC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return r.scanReportsWithReporterName(rows)
+}
+
+// Performs full-text search on user's own reports with optional category filtering.
+func (r *ReportRepository) SearchMyReports(reporterID uuid.UUID, search string, categoryID *int) ([]model.Report, error) {
+	query := `
+		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
+			r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
+			c.id, c.name, c.department
+		FROM reports r
+		JOIN categories c ON r.category_id = c.id
+		WHERE r.reporter_id = $1
+	`
+	args := []interface{}{reporterID}
+	argIndex := 2
+
+	if search != "" {
+		query += fmt.Sprintf(" AND (LOWER(r.title) LIKE LOWER($%d) OR LOWER(r.description) LIKE LOWER($%d))", argIndex, argIndex)
+		args = append(args, "%"+search+"%")
+		argIndex++
+	}
+
+	if categoryID != nil && *categoryID > 0 {
+		query += fmt.Sprintf(" AND r.category_id = $%d", argIndex)
+		args = append(args, *categoryID)
+		argIndex++
+	}
+
+	query += " ORDER BY r.created_at DESC"
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var reports []model.Report
+	for rows.Next() {
+		report := model.Report{Category: &model.Category{}}
+		var lat, lng sql.NullFloat64
+		var photoURL sql.NullString
+		var reporterIDNull sql.NullString
+
+		err := rows.Scan(
+			&report.ID,
+			&report.Title,
+			&report.Description,
+			&report.CategoryID,
+			&lat,
+			&lng,
+			&photoURL,
+			&report.PrivacyLevel,
+			&reporterIDNull,
+			&report.Status,
+			&report.VoteScore,
+			&report.CreatedAt,
+			&report.UpdatedAt,
+			&report.Category.ID,
+			&report.Category.Name,
+			&report.Category.Department,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if lat.Valid {
+			report.LocationLat = &lat.Float64
+		}
+		if lng.Valid {
+			report.LocationLng = &lng.Float64
+		}
+		if photoURL.Valid {
+			report.PhotoURL = &photoURL.String
+		}
+		if reporterIDNull.Valid {
+			uid, _ := uuid.Parse(reporterIDNull.String)
+			report.ReporterID = &uid
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// Helper to scan report rows that include reporter name from users table.
+func (r *ReportRepository) scanReportsWithReporterName(rows *sql.Rows) ([]model.Report, error) {
+	var reports []model.Report
+	for rows.Next() {
+		report := model.Report{Category: &model.Category{}}
+		var lat, lng sql.NullFloat64
+		var photoURL sql.NullString
+		var reporterID sql.NullString
+		var reporterName sql.NullString
+
+		err := rows.Scan(
+			&report.ID,
+			&report.Title,
+			&report.Description,
+			&report.CategoryID,
+			&lat,
+			&lng,
+			&photoURL,
+			&report.PrivacyLevel,
+			&reporterID,
+			&report.Status,
+			&report.VoteScore,
+			&report.CreatedAt,
+			&report.UpdatedAt,
+			&report.Category.ID,
+			&report.Category.Name,
+			&report.Category.Department,
+			&reporterName,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if lat.Valid {
+			report.LocationLat = &lat.Float64
+		}
+		if lng.Valid {
+			report.LocationLng = &lng.Float64
+		}
+		if photoURL.Valid {
+			report.PhotoURL = &photoURL.String
+		}
+		if reporterID.Valid {
+			uid, _ := uuid.Parse(reporterID.String)
+			report.ReporterID = &uid
+		}
+		if reporterName.Valid {
+			report.ReporterName = &reporterName.String
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// Performs case-insensitive lookup of category by name.
+func (r *ReportRepository) FindCategoryByName(name string) (*model.Category, error) {
+	query := `SELECT id, name, department FROM categories WHERE LOWER(name) = LOWER($1)`
+	cat := &model.Category{}
+	err := r.db.QueryRow(query, name).Scan(&cat.ID, &cat.Name, &cat.Department)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found
+		}
+		return nil, err
+	}
+	return cat, nil
+}
+
+// Inserts a new category and returns it with the generated ID.
+func (r *ReportRepository) CreateCategory(name, department string) (*model.Category, error) {
+	query := `INSERT INTO categories (name, department) VALUES ($1, $2) RETURNING id`
+	var id int
+	err := r.db.QueryRow(query, name, department).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return &model.Category{ID: id, Name: name, Department: department}, nil
 }

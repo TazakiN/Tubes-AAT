@@ -3,6 +3,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"time"
 
 	"report-service/config"
@@ -13,8 +14,9 @@ import (
 )
 
 type ReportService struct {
-	reportRepo *repository.ReportRepository
-	anonConfig config.AnonymousConfig
+	reportRepo          *repository.ReportRepository
+	anonConfig          config.AnonymousConfig
+	notificationService *NotificationService
 }
 
 func NewReportService(reportRepo *repository.ReportRepository, anonConfig config.AnonymousConfig) *ReportService {
@@ -24,7 +26,12 @@ func NewReportService(reportRepo *repository.ReportRepository, anonConfig config
 	}
 }
 
-// CreateReport creates a new report with anonymous hashing if needed
+// Injects the notification service dependency for status update notifications.
+func (s *ReportService) SetNotificationService(ns *NotificationService) {
+	s.notificationService = ns
+}
+
+// Persists a new report. Applies SHA-256 hashing to reporter ID for anonymous reports.
 func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID string, userName string) (*model.Report, error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
@@ -41,6 +48,7 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 		PhotoURL:     req.PhotoURL,
 		PrivacyLevel: req.PrivacyLevel,
 		Status:       model.StatusPending,
+		VoteScore:    0,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -67,7 +75,7 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 	return report, nil
 }
 
-// GetReports returns reports based on user role and department
+// Returns reports filtered by user role and department. Masks anonymous reporter info.
 func (s *ReportService) GetReports(userRole string, department *string) (*model.ReportListResponse, error) {
 	reports, err := s.reportRepo.FindAll(userRole, department)
 	if err != nil {
@@ -88,7 +96,24 @@ func (s *ReportService) GetReports(userRole string, department *string) (*model.
 	}, nil
 }
 
-// GetMyReports returns reports created by the user (non-anonymous only)
+// Returns all public reports. No authentication required.
+func (s *ReportService) GetPublicReports() (*model.ReportListResponse, error) {
+	reports, err := s.reportRepo.GetPublicReports()
+	if err != nil {
+		return nil, err
+	}
+
+	if reports == nil {
+		reports = []model.Report{}
+	}
+
+	return &model.ReportListResponse{
+		Reports: reports,
+		Total:   len(reports),
+	}, nil
+}
+
+// Returns non-anonymous reports created by the specified user.
 func (s *ReportService) GetMyReports(userID string) (*model.ReportListResponse, error) {
 	uid, err := uuid.Parse(userID)
 	if err != nil {
@@ -100,13 +125,17 @@ func (s *ReportService) GetMyReports(userID string) (*model.ReportListResponse, 
 		return nil, err
 	}
 
+	if reports == nil {
+		reports = []model.Report{}
+	}
+
 	return &model.ReportListResponse{
 		Reports: reports,
 		Total:   len(reports),
 	}, nil
 }
 
-// GetReportByID returns a single report, masking anonymous info
+// Retrieves a single report with RBAC validation. Masks anonymous reporter info.
 func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID string, department *string) (*model.Report, error) {
 	report, err := s.reportRepo.FindByID(id)
 	if err != nil {
@@ -116,7 +145,7 @@ func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID stri
 	// RBAC check: Admin can only view reports in their department
 	if userRole != "warga" && department != nil {
 		if report.Category.Department != *department {
-			return nil, err
+			return nil, fmt.Errorf("access denied")
 		}
 	}
 
@@ -125,7 +154,7 @@ func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID stri
 		if report.PrivacyLevel != model.PrivacyPublic {
 			// Check if this is the reporter's own report
 			if report.ReporterID == nil || report.ReporterID.String() != userID {
-				return nil, err
+				return nil, fmt.Errorf("access denied")
 			}
 		}
 	}
@@ -139,7 +168,29 @@ func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID stri
 	return report, nil
 }
 
-// UpdateReportStatus updates the status of a report (admin only)
+// Updates title and/or description. Only the report owner can perform this action.
+func (s *ReportService) UpdateReport(reportID uuid.UUID, userID string, req *model.UpdateReportRequest) (*model.Report, error) {
+	// Get the report first to check ownership
+	report, err := s.reportRepo.FindByID(reportID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check ownership - only the reporter can edit
+	if report.ReporterID == nil || report.ReporterID.String() != userID {
+		return nil, fmt.Errorf("only the report owner can edit")
+	}
+
+	// Update the report
+	if err := s.reportRepo.Update(reportID, req.Title, req.Description); err != nil {
+		return nil, err
+	}
+
+	// Return updated report
+	return s.reportRepo.FindByID(reportID)
+}
+
+// Updates status with department validation. Triggers async notification to reporter.
 func (s *ReportService) UpdateReportStatus(reportID uuid.UUID, status model.ReportStatus, department *string) error {
 	// Verify admin can access this report's category
 	report, err := s.reportRepo.FindByID(reportID)
@@ -148,10 +199,85 @@ func (s *ReportService) UpdateReportStatus(reportID uuid.UUID, status model.Repo
 	}
 
 	if department != nil && report.Category.Department != *department {
+		return fmt.Errorf("access denied")
+	}
+
+	// Update status
+	if err := s.reportRepo.UpdateStatus(reportID, status); err != nil {
 		return err
 	}
 
-	return s.reportRepo.UpdateStatus(reportID, status)
+	// Send notification to the reporter if notification service is available
+	if s.notificationService != nil {
+		go func() {
+			err := s.notificationService.CreateStatusNotification(reportID, status, report.Title, report.ReporterID)
+			if err != nil {
+				// Log error but don't fail the status update
+				fmt.Printf("Failed to create notification: %v\n", err)
+			}
+		}()
+	}
+
+	return nil
+}
+
+// Returns all available report categories.
+func (s *ReportService) GetCategories() ([]model.Category, error) {
+	return s.reportRepo.GetAllCategories()
+}
+
+// Searches public reports with optional text search and category filtering.
+func (s *ReportService) SearchPublicReports(search string, categoryID *int) (*model.ReportListResponse, error) {
+	reports, err := s.reportRepo.SearchPublicReports(search, categoryID)
+	if err != nil {
+		return nil, err
+	}
+
+	if reports == nil {
+		reports = []model.Report{}
+	}
+
+	return &model.ReportListResponse{
+		Reports: reports,
+		Total:   len(reports),
+	}, nil
+}
+
+// Searches user's own reports with optional text search and category filtering.
+func (s *ReportService) SearchMyReports(userID string, search string, categoryID *int) (*model.ReportListResponse, error) {
+	uid, err := uuid.Parse(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	reports, err := s.reportRepo.SearchMyReports(uid, search, categoryID)
+	if err != nil {
+		return nil, err
+	}
+
+	if reports == nil {
+		reports = []model.Report{}
+	}
+
+	return &model.ReportListResponse{
+		Reports: reports,
+		Total:   len(reports),
+	}, nil
+}
+
+// Returns existing category by case-insensitive name match, or creates a new one.
+func (s *ReportService) GetOrCreateCategory(name, department string) (*model.Category, error) {
+	// Try to find existing category
+	existing, err := s.reportRepo.FindCategoryByName(name)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
+	}
+
+	// Create new category
+	return s.reportRepo.CreateCategory(name, department)
 }
 
 func (s *ReportService) hashUserID(userID string) string {
