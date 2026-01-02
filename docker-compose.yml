@@ -109,9 +109,9 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./observability/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - ./observability/loki:/etc/loki-config:ro
       - loki_data:/tmp/loki
-    command: -config.file=/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki-config/loki-config.yaml
     networks:
       - app-network
     restart: unless-stopped
@@ -120,9 +120,9 @@ services:
     image: grafana/promtail:3.0.0
     container_name: promtail
     volumes:
-      - ./observability/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - ./observability/promtail:/etc/promtail-config:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    command: -config.file=/etc/promtail/config.yml
+    command: -config.file=/etc/promtail-config/promtail-config.yaml
     depends_on:
       - loki
     networks:
