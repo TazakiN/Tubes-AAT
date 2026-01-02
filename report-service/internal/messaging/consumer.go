@@ -40,6 +40,8 @@ func (h *SSEHub) Run() {
 		select {
 		case client := <-h.register:
 			h.clients[client.UserID] = append(h.clients[client.UserID], client)
+			log.Printf("[SSE DEBUG] Client registered: UserID=%s, Total clients for user=%d",
+				client.UserID.String(), len(h.clients[client.UserID]))
 
 		case client := <-h.unregister:
 			userClients := h.clients[client.UserID]
@@ -50,14 +52,18 @@ func (h *SSEHub) Run() {
 				}
 			}
 			close(client.Channel)
+			log.Printf("[SSE DEBUG] Client unregistered: UserID=%s", client.UserID.String())
 
 		case notification := <-h.broadcast:
 			clients := h.clients[notification.UserID]
+			log.Printf("[SSE DEBUG] Broadcasting to UserID=%s, Clients count=%d",
+				notification.UserID.String(), len(clients))
 			for _, client := range clients {
 				select {
 				case client.Channel <- notification:
+					log.Printf("[SSE DEBUG] Sent to client successfully")
 				default:
-					// channel full, skip
+					log.Printf("[SSE DEBUG] Client channel full, skipped")
 				}
 			}
 		}
@@ -148,6 +154,9 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) {
 		return
 	}
 
+	log.Printf("[SSE DEBUG] Received status update: ReportID=%s, ReporterID=%s, Status=%s",
+		statusUpdate.ReportID, statusUpdate.ReporterID, statusUpdate.NewStatus)
+
 	reportID, err := uuid.Parse(statusUpdate.ReportID)
 	if err != nil {
 		msg.Nack(false, false)
@@ -176,8 +185,11 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) {
 				IsRead:    false,
 				CreatedAt: time.Now(),
 			}
+			log.Printf("[SSE DEBUG] Broadcasting to user: %s", reporterID.String())
 			c.sseHub.SendToUser(notification)
 		}
+	} else {
+		log.Printf("[SSE DEBUG] No ReporterID, skipping SSE broadcast")
 	}
 
 	msg.Ack(false)

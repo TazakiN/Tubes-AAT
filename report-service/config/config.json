@@ -17,5 +17,8 @@
   },
   "anonymous": {
     "salt": "cityconnect-anonymous-salt-2024"
+  },
+  "jwt": {
+    "secret": "cityconnect-poc-secret-key-2024"
   }
 }

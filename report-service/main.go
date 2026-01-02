@@ -77,9 +77,9 @@ func main() {
 	// Initialize handlers
 	reportHandler := handler.NewReportHandler(reportService)
 	voteHandler := handler.NewVoteHandler(voteService)
-	notificationHandler := handler.NewNotificationHandler(notificationService)
+	notificationHandler := handler.NewNotificationHandler(notificationService, cfg.JWT.Secret)
 
-	// Setup Gin router
+	// Setup Gin
 	r := gin.Default()
 
 	// Health check
