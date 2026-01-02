@@ -1,5 +1,3 @@
-// Service Worker for CityConnect Push Notifications
-
 self.addEventListener("install", (_event) => {
   self.skipWaiting();
 });
@@ -31,13 +29,11 @@ self.addEventListener("notificationclick", (event) => {
     clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clientList) => {
-        // Focus existing window if open
         for (const client of clientList) {
           if (client.url.includes(self.location.origin) && "focus" in client) {
             return client.focus();
           }
         }
-        // Open new window if not open
         if (clients.openWindow) {
           return clients.openWindow("/");
         }

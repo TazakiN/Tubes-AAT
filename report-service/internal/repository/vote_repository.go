@@ -10,18 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// Data access layer for report vote operations.
 type VoteRepository struct {
 	db *sql.DB
 }
 
-// Constructor for VoteRepository.
 func NewVoteRepository(db *sql.DB) *VoteRepository {
 	return &VoteRepository{db: db}
 }
 
-// Retrieves a user's existing vote on a report.
-// Returns nil with no error if no vote exists.
 func (r *VoteRepository) GetVote(reportID, userID uuid.UUID) (*model.ReportVote, error) {
 	query := `
 		SELECT id, report_id, user_id, vote_type, created_at
@@ -38,14 +34,13 @@ func (r *VoteRepository) GetVote(reportID, userID uuid.UUID) (*model.ReportVote,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // No vote exists, not an error
+			return nil, nil
 		}
 		return nil, err
 	}
 	return vote, nil
 }
 
-// Inserts a new vote record.
 func (r *VoteRepository) CreateVote(vote *model.ReportVote) error {
 	query := `
 		INSERT INTO report_votes (id, report_id, user_id, vote_type, created_at)
@@ -61,7 +56,6 @@ func (r *VoteRepository) CreateVote(vote *model.ReportVote) error {
 	return err
 }
 
-// Changes the vote type for an existing vote record.
 func (r *VoteRepository) UpdateVote(voteID uuid.UUID, voteType model.VoteType) error {
 	query := `UPDATE report_votes SET vote_type = $1 WHERE id = $2`
 	result, err := r.db.Exec(query, voteType, voteID)
@@ -79,7 +73,6 @@ func (r *VoteRepository) UpdateVote(voteID uuid.UUID, voteType model.VoteType) e
 	return nil
 }
 
-// Removes a vote record by report and user ID.
 func (r *VoteRepository) DeleteVote(reportID, userID uuid.UUID) error {
 	query := `DELETE FROM report_votes WHERE report_id = $1 AND user_id = $2`
 	result, err := r.db.Exec(query, reportID, userID)
@@ -97,8 +90,6 @@ func (r *VoteRepository) DeleteVote(reportID, userID uuid.UUID) error {
 	return nil
 }
 
-// Increments or decrements the vote_score column on a report.
-// Delta can be positive (upvote) or negative (downvote).
 func (r *VoteRepository) UpdateReportVoteScore(reportID uuid.UUID, delta int) error {
 	query := `UPDATE reports SET vote_score = vote_score + $1 WHERE id = $2`
 	result, err := r.db.Exec(query, delta, reportID)
@@ -116,7 +107,6 @@ func (r *VoteRepository) UpdateReportVoteScore(reportID uuid.UUID, delta int) er
 	return nil
 }
 
-// Returns the current vote_score value for a report.
 func (r *VoteRepository) GetReportVoteScore(reportID uuid.UUID) (int, error) {
 	query := `SELECT vote_score FROM reports WHERE id = $1`
 	var score int
@@ -130,7 +120,6 @@ func (r *VoteRepository) GetReportVoteScore(reportID uuid.UUID) (int, error) {
 	return score, nil
 }
 
-// Atomically creates/updates vote and adjusts score within a transaction.
 func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteType model.VoteType) (int, error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -138,7 +127,6 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 	}
 	defer tx.Rollback()
 
-	// Check existing vote
 	var existingVote *model.ReportVote
 	query := `
 		SELECT id, report_id, user_id, vote_type, created_at
@@ -162,9 +150,7 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 	var scoreDelta int
 
 	if hasExistingVote {
-		// User already voted
 		if existingVote.VoteType == voteType {
-			// Same vote type - no change needed
 			var currentScore int
 			err = tx.QueryRow(`SELECT vote_score FROM reports WHERE id = $1`, reportID).Scan(&currentScore)
 			if err != nil {
@@ -174,13 +160,10 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 			return currentScore, nil
 		}
 
-		// Different vote type - update vote and calculate delta
-		// If changing from upvote to downvote: delta = -2
-		// If changing from downvote to upvote: delta = +2
 		if voteType == model.VoteUpvote {
-			scoreDelta = 2 // was downvote (-1), now upvote (+1), net change = +2
+			scoreDelta = 2
 		} else {
-			scoreDelta = -2 // was upvote (+1), now downvote (-1), net change = -2
+			scoreDelta = -2
 		}
 
 		_, err = tx.Exec(`UPDATE report_votes SET vote_type = $1 WHERE id = $2`, voteType, existingVote.ID)
@@ -188,7 +171,6 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 			return 0, err
 		}
 	} else {
-		// New vote
 		if voteType == model.VoteUpvote {
 			scoreDelta = 1
 		} else {
@@ -211,13 +193,11 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 		}
 	}
 
-	// Update report score
 	_, err = tx.Exec(`UPDATE reports SET vote_score = vote_score + $1 WHERE id = $2`, scoreDelta, reportID)
 	if err != nil {
 		return 0, err
 	}
 
-	// Get new score
 	var newScore int
 	err = tx.QueryRow(`SELECT vote_score FROM reports WHERE id = $1`, reportID).Scan(&newScore)
 	if err != nil {
@@ -231,7 +211,6 @@ func (r *VoteRepository) VoteWithTransaction(reportID, userID uuid.UUID, voteTyp
 	return newScore, nil
 }
 
-// Atomically removes vote and reverses score adjustment within a transaction.
 func (r *VoteRepository) RemoveVoteWithTransaction(reportID, userID uuid.UUID) (int, error) {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -239,7 +218,6 @@ func (r *VoteRepository) RemoveVoteWithTransaction(reportID, userID uuid.UUID) (
 	}
 	defer tx.Rollback()
 
-	// Get existing vote
 	var voteType model.VoteType
 	query := `SELECT vote_type FROM report_votes WHERE report_id = $1 AND user_id = $2 FOR UPDATE`
 	err = tx.QueryRow(query, reportID, userID).Scan(&voteType)
@@ -250,7 +228,6 @@ func (r *VoteRepository) RemoveVoteWithTransaction(reportID, userID uuid.UUID) (
 		return 0, err
 	}
 
-	// Calculate score delta (reverse the vote)
 	var scoreDelta int
 	if voteType == model.VoteUpvote {
 		scoreDelta = -1
@@ -258,19 +235,16 @@ func (r *VoteRepository) RemoveVoteWithTransaction(reportID, userID uuid.UUID) (
 		scoreDelta = 1
 	}
 
-	// Delete vote
 	_, err = tx.Exec(`DELETE FROM report_votes WHERE report_id = $1 AND user_id = $2`, reportID, userID)
 	if err != nil {
 		return 0, err
 	}
 
-	// Update score
 	_, err = tx.Exec(`UPDATE reports SET vote_score = vote_score + $1 WHERE id = $2`, scoreDelta, reportID)
 	if err != nil {
 		return 0, err
 	}
 
-	// Get new score
 	var newScore int
 	err = tx.QueryRow(`SELECT vote_score FROM reports WHERE id = $1`, reportID).Scan(&newScore)
 	if err != nil {

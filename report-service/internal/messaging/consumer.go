@@ -203,7 +203,6 @@ func (c *NotificationConsumer) handleReportCreated(msg amqp.Delivery) {
 		return
 	}
 
-	// TODO: notify admins, update dashboards, etc.
 	msg.Ack(false)
 }
 
@@ -239,7 +238,6 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) {
 				CreatedAt: time.Now(),
 			}
 
-			// Save to database
 			if err := c.notificationRepo.Create(notification); err != nil {
 				log.Printf("db error: %v", err)
 			}

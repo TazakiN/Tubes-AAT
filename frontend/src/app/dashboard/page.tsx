@@ -18,7 +18,6 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [categoryId, setCategoryId] = useState<number>(0);

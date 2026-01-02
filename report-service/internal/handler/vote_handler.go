@@ -36,7 +36,6 @@ func (h *VoteHandler) CastVote(c *gin.Context) {
 		return
 	}
 
-	// Validate vote type
 	if req.VoteType != model.VoteUpvote && req.VoteType != model.VoteDownvote {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "vote_type must be 'upvote' or 'downvote'"})
 		return

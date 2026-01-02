@@ -9,17 +9,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// Data access layer for notification operations.
 type NotificationRepository struct {
 	db *sql.DB
 }
-
-// Constructor for NotificationRepository.
 func NewNotificationRepository(db *sql.DB) *NotificationRepository {
 	return &NotificationRepository{db: db}
 }
 
-// Inserts a new notification record.
 func (r *NotificationRepository) Create(notification *model.Notification) error {
 	query := `
 		INSERT INTO notifications (id, user_id, report_id, title, message, is_read, created_at)
@@ -37,7 +33,6 @@ func (r *NotificationRepository) Create(notification *model.Notification) error 
 	return err
 }
 
-// Returns notifications for a user, ordered by creation time descending (limit 50).
 func (r *NotificationRepository) GetByUserID(userID uuid.UUID) ([]model.Notification, error) {
 	query := `
 		SELECT id, user_id, report_id, title, message, is_read, created_at
@@ -78,7 +73,6 @@ func (r *NotificationRepository) GetByUserID(userID uuid.UUID) ([]model.Notifica
 	return notifications, nil
 }
 
-// Returns the count of unread notifications for a user.
 func (r *NotificationRepository) GetUnreadCount(userID uuid.UUID) (int, error) {
 	query := `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = FALSE`
 	var count int
@@ -89,7 +83,6 @@ func (r *NotificationRepository) GetUnreadCount(userID uuid.UUID) (int, error) {
 	return count, nil
 }
 
-// Sets a single notification's is_read flag to true.
 func (r *NotificationRepository) MarkAsRead(notificationID, userID uuid.UUID) error {
 	query := `UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2`
 	result, err := r.db.Exec(query, notificationID, userID)
@@ -103,17 +96,13 @@ func (r *NotificationRepository) MarkAsRead(notificationID, userID uuid.UUID) er
 	return nil
 }
 
-// Sets all user's unread notifications to read.
 func (r *NotificationRepository) MarkAllAsRead(userID uuid.UUID) error {
 	query := `UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE`
 	_, err := r.db.Exec(query, userID)
 	return err
 }
 
-// Creates a notification for report status changes.
-// Retrieves reporter_id from the report; skips if report is anonymous.
 func (r *NotificationRepository) CreateStatusNotification(reportID uuid.UUID, newStatus model.ReportStatus, reportTitle string) error {
-	// Get the reporter_id for the report
 	var reporterID sql.NullString
 	query := `SELECT reporter_id FROM reports WHERE id = $1`
 	err := r.db.QueryRow(query, reportID).Scan(&reporterID)
@@ -121,7 +110,6 @@ func (r *NotificationRepository) CreateStatusNotification(reportID uuid.UUID, ne
 		return err
 	}
 
-	// If no reporter (anonymous), we can't send notification
 	if !reporterID.Valid {
 		return nil
 	}
@@ -131,7 +119,6 @@ func (r *NotificationRepository) CreateStatusNotification(reportID uuid.UUID, ne
 		return err
 	}
 
-	// Create notification
 	notification := &model.Notification{
 		ID:        uuid.New(),
 		UserID:    userID,

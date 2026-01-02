@@ -86,7 +86,7 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 		return
 	}
 
-	// Set headers for upstream services (Nginx will forward these)
+	// Set headers for Nginx
 	if response.Valid {
 		c.Header("X-User-ID", response.UserID)
 		c.Header("X-User-Role", response.Role)
@@ -98,7 +98,7 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
-	// Get user ID from header (set by Nginx after validation)
+	// Get user ID from header
 	userIDStr := c.GetHeader("X-User-ID")
 	if userIDStr == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})

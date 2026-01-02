@@ -43,10 +43,9 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 }
 
 func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
-	// Try header first (for nginx-authenticated requests)
 	userIDStr := c.GetHeader("X-User-ID")
 	
-	// If no header, validate token from query param (for EventSource)
+	// If no header, validate token from query param
 	if userIDStr == "" {
 		token := c.Query("token")
 		if token == "" {

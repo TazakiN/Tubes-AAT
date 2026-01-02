@@ -145,7 +145,7 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 ### Reports
 
 ```bash
-# Get public reports (with search)
+# Get public reports
 curl "http://localhost:8080/api/v1/reports/public?search=jalan&category_id=7"
 
 # Create report (requires token)
@@ -206,33 +206,10 @@ DB_PASSWORD=cityconnect_secret
 DB_NAME=cityconnect
 
 # JWT
-JWT_SECRET=your-super-secret-jwt-key-change-in-production
+JWT_SECRET=your-secret-jwt-key
 
 # Configuration
 CONFIG_PATH=/app/config.json
-```
-
-## Development
-
-### Run individual services
-
-```bash
-# Backend only
-docker-compose up -d postgres auth-service report-service gateway
-
-# Frontend development (with hot reload)
-cd frontend && npm install && npm run dev
-```
-
-### Rebuild after changes
-
-```bash
-# Rebuild specific service
-docker-compose build --no-cache report-service
-docker-compose up -d report-service
-
-# Rebuild all
-docker-compose up -d --build
 ```
 
 ### View logs
@@ -261,7 +238,6 @@ docker-compose logs -f auth-service
 - JWT secret in config (use vault in production)
 - No rate limiting
 - Single instance per service (no horizontal scaling)
-- Observability stack not yet configured for production
 
 ## License
 

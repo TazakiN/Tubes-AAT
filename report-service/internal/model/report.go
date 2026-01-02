@@ -49,14 +49,13 @@ type Report struct {
 	PrivacyLevel PrivacyLevel `json:"privacy_level"`
 	ReporterID   *uuid.UUID   `json:"reporter_id,omitempty"`   // Hidden for anonymous
 	ReporterName *string      `json:"reporter_name,omitempty"` // Hidden for anonymous
-	ReporterHash *string      `json:"-"`                       // Never expose, used internally
+	ReporterHash *string      `json:"-"` 
 	Status       ReportStatus `json:"status"`
 	VoteScore    int          `json:"vote_score"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
 }
 
-// ReportVote tracks individual user votes on reports
 type ReportVote struct {
 	ID        uuid.UUID `json:"id"`
 	ReportID  uuid.UUID `json:"report_id"`
@@ -65,7 +64,6 @@ type ReportVote struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Notification represents a persistent notification for a user
 type Notification struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`

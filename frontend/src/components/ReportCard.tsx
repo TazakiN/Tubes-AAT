@@ -32,7 +32,7 @@ export default function ReportCard({
         setVoteScore(response.vote_score);
         setUserVote(null);
       } else {
-        // Cast vote
+        // Add vote
         const response = await api.castVote(report.id, { vote_type: voteType });
         setVoteScore(response.vote_score);
         setUserVote(response.user_vote_type || null);

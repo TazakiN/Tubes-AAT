@@ -1,5 +1,5 @@
 services:
-  # --- API GATEWAY (Nginx) ---
+  # API GATEWAY
   gateway:
     image: nginx:alpine
     ports:
@@ -14,7 +14,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- AUTH SERVICE (Go) ---
+  # AUTH SERVICE
   auth-service:
     build: ./auth-service
     container_name: auth-service
@@ -29,7 +29,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- REPORT SERVICE (Go) ---
+  # REPORT SERVICE
   report-service:
     build: ./report-service
     container_name: report-service
@@ -46,7 +46,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- FRONTEND (Next.js) ---
+  # FRONTEND
   frontend:
     build: ./frontend
     container_name: frontend
@@ -58,7 +58,7 @@ services:
       - app-network
     restart: unless-stopped
 
-  # --- DATABASE (PostgreSQL) ---
+  # DATABASE
   postgres:
     image: postgres:15-alpine
     container_name: postgres
@@ -80,7 +80,7 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # --- MESSAGE BROKER (RabbitMQ) ---
+  # MESSAGE BROKER
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: rabbitmq
@@ -101,7 +101,7 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # --- OBSERVABILITY STACK ---
+  # OBSERVABILITY STACK
   loki:
     image: grafana/loki:3.0.0
     container_name: loki
