@@ -85,7 +85,7 @@ services:
     image: rabbitmq:3.12-management-alpine
     container_name: rabbitmq
     ports:
-      - "5672:5672"   # AMQP protocol
+      - "5672:5672" # AMQP protocol
       - "15672:15672" # Management UI
     environment:
       RABBITMQ_DEFAULT_USER: cityconnect
@@ -103,9 +103,9 @@ services:
 
   # --- OBSERVABILITY STACK ---
   loki:
-    image: grafana/loki:2.9.0
+    image: grafana/loki:3.0.0
     container_name: loki
-    user: "0"  # Run as root to avoid permission issues
+    user: "0"
     ports:
       - "3100:3100"
     volumes:
@@ -117,7 +117,7 @@ services:
     restart: unless-stopped
 
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.0.0
     container_name: promtail
     volumes:
       - ./observability/promtail/promtail-config.yaml:/etc/promtail/config.yml:ro
