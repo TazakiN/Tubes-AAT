@@ -32,6 +32,7 @@ docker-compose ps
 |---------|-----|-------------|
 | **Frontend** | <http://localhost:8080> | — |
 | **API Gateway** | <http://localhost:8080/api/v1> | — |
+| **RabbitMQ Management** | <http://localhost:15672> | cityconnect / cityconnect_secret |
 | **Grafana** | <http://localhost:3050> | admin / admin |
 
 ## Demo Accounts
@@ -78,6 +79,12 @@ docker-compose ps
                     │  - JWT         │ │  - SSE Notif  │
                     └────────┬───────┘ └──────┬────────┘
                              │                │
+                             │         ┌──────▼────────┐
+                             │         │   RabbitMQ    │
+                             │         │   (:5672)     │
+                             │         │  - Pub/Sub    │
+                             │         └──────┬────────┘
+                             │                │
                              └───────┬────────┘
                                      ▼
                             ┌────────────────┐
@@ -85,6 +92,15 @@ docker-compose ps
                             │    (:5432)     │
                             └────────────────┘
 ```
+
+### Message Flow
+
+1. Admin updates report status via API
+2. Report Service publishes message to RabbitMQ
+3. Notification Consumer receives message from queue
+4. Consumer saves notification to database
+5. Consumer broadcasts to SSE Hub
+6. SSE Hub pushes to connected frontend clients
 
 ## API Endpoints
 
@@ -210,6 +226,7 @@ docker-compose logs -f auth-service
 | Backend | Go (Gin) |
 | Frontend | Next.js 14 |
 | Database | PostgreSQL 15 |
+| Message Broker | RabbitMQ 3.12 |
 | Real-time | SSE |
 | Auth | JWT |
 | Logging | Loki + Promtail |

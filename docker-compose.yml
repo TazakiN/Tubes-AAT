@@ -40,6 +40,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     networks:
       - app-network
     restart: unless-stopped
@@ -78,10 +80,32 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # --- MESSAGE BROKER (RabbitMQ) ---
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: cityconnect
+      RABBITMQ_DEFAULT_PASS: cityconnect_secret
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # --- OBSERVABILITY STACK ---
   loki:
     image: grafana/loki:2.9.0
     container_name: loki
+    user: "0"  # Run as root to avoid permission issues
     ports:
       - "3100:3100"
     volumes:
@@ -132,3 +156,4 @@ volumes:
   postgres_data:
   loki_data:
   grafana_data:
+  rabbitmq_data:

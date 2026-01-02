@@ -7,6 +7,7 @@ import (
 
 	"report-service/config"
 	"report-service/internal/handler"
+	"report-service/internal/messaging"
 	"report-service/internal/repository"
 	"report-service/internal/service"
 
@@ -15,7 +16,6 @@ import (
 )
 
 func main() {
-	// Load config
 	cfg, err := config.LoadConfig("config/config.json")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -36,24 +36,43 @@ func main() {
 	}
 	defer db.Close()
 
-	// Test connection
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 	log.Println("Connected to database")
+
+	// Connect to RabbitMQ
+	rmq, err := messaging.NewRabbitMQ(
+		cfg.RabbitMQ.Host,
+		cfg.RabbitMQ.Port,
+		cfg.RabbitMQ.User,
+		cfg.RabbitMQ.Password,
+	)
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer rmq.Close()
+	log.Println("Connected to RabbitMQ")
+
+	// Initialize SSE Hub
+	sseHub := messaging.NewSSEHub()
+	go sseHub.Run()
 
 	// Initialize repositories
 	reportRepo := repository.NewReportRepository(db)
 	voteRepo := repository.NewVoteRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 
-	// Initialize services
-	reportService := service.NewReportService(reportRepo, cfg.Anonymous)
-	voteService := service.NewVoteService(voteRepo, reportRepo)
-	notificationService := service.NewNotificationService(notificationRepo)
+	// Start notification consumer
+	consumer := messaging.NewNotificationConsumer(rmq, notificationRepo, sseHub)
+	consumer.Start()
+	defer consumer.Stop()
+	log.Println("Notification consumer started")
 
-	// Wire notification service to report service for status update notifications
-	reportService.SetNotificationService(notificationService)
+	// Initialize services
+	reportService := service.NewReportService(reportRepo, cfg.Anonymous, rmq)
+	voteService := service.NewVoteService(voteRepo, reportRepo, rmq)
+	notificationService := service.NewNotificationService(notificationRepo, sseHub)
 
 	// Initialize handlers
 	reportHandler := handler.NewReportHandler(reportService)
@@ -66,7 +85,7 @@ func main() {
 	// Health check
 	r.GET("/health", reportHandler.Health)
 
-	// Public endpoints (no auth required - these will bypass auth in nginx)
+	// Public endpoints
 	r.GET("/public", reportHandler.GetPublicReports)
 	r.GET("/categories", reportHandler.GetCategories)
 	r.POST("/categories", reportHandler.CreateCategory)
@@ -84,7 +103,7 @@ func main() {
 	r.DELETE("/:id/vote", voteHandler.RemoveVote)
 	r.GET("/:id/vote", voteHandler.GetVote)
 
-	// Notification routes (auth required) - these will be accessed via /api/v1/notifications
+	// Notification routes (auth required)
 	notifications := r.Group("/notifications")
 	{
 		notifications.GET("", notificationHandler.GetNotifications)
@@ -93,11 +112,9 @@ func main() {
 		notifications.PATCH("/read-all", notificationHandler.MarkAllAsRead)
 	}
 
-	// Start server
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
 	log.Printf("Report service starting on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
-

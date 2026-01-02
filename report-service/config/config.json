@@ -9,6 +9,12 @@
     "password": "password",
     "dbname": "city_db"
   },
+  "rabbitmq": {
+    "host": "rabbitmq",
+    "port": "5672",
+    "user": "cityconnect",
+    "password": "cityconnect_secret"
+  },
   "anonymous": {
     "salt": "cityconnect-anonymous-salt-2024"
   }

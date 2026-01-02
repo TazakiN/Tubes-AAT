@@ -12,17 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// HTTP handler for notification-related endpoints.
 type NotificationHandler struct {
 	notificationService *service.NotificationService
 }
 
-// Constructor for NotificationHandler.
 func NewNotificationHandler(notificationService *service.NotificationService) *NotificationHandler {
 	return &NotificationHandler{notificationService: notificationService}
 }
 
-// Handles GET /notifications - returns all notifications for the authenticated user.
 func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -39,7 +36,6 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles GET /notifications/stream - establishes an SSE connection for real-time notifications.
 func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
 	userIDStr := c.GetHeader("X-User-ID")
 	if userIDStr == "" {
@@ -53,34 +49,27 @@ func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
 		return
 	}
 
-	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no") // Disable nginx buffering
+	c.Header("X-Accel-Buffering", "no")
 
-	// Register SSE client
 	client := h.notificationService.RegisterClient(userID)
 	defer h.notificationService.UnregisterClient(client)
 
-	// Send initial connection event
 	c.SSEvent("connected", gin.H{"message": "SSE connection established"})
 	c.Writer.Flush()
 
-	// Create a channel to detect client disconnect
 	clientGone := c.Request.Context().Done()
 
 	for {
 		select {
 		case <-clientGone:
-			// Client disconnected
 			return
 		case notification, ok := <-client.Channel:
 			if !ok {
-				// Channel closed
 				return
 			}
-			// Send notification as SSE event
 			data, _ := json.Marshal(notification)
 			c.SSEvent("notification", string(data))
 			c.Writer.Flush()
@@ -88,7 +77,6 @@ func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
 	}
 }
 
-// Handles PATCH /notifications/:id/read - marks a single notification as read.
 func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -111,7 +99,6 @@ func (h *NotificationHandler) MarkAsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "notification marked as read"})
 }
 
-// Handles PATCH /notifications/read-all - marks all notifications for the user as read.
 func (h *NotificationHandler) MarkAllAsRead(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -128,7 +115,6 @@ func (h *NotificationHandler) MarkAllAsRead(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "all notifications marked as read"})
 }
 
-// Helper for writing SSE event messages to an io.Writer.
 func SSEWrite(w io.Writer, event string, data interface{}) error {
 	jsonData, err := json.Marshal(data)
 	if err != nil {

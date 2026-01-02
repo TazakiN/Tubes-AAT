@@ -2,7 +2,10 @@ package service
 
 import (
 	"fmt"
+	"log"
+	"time"
 
+	"report-service/internal/messaging"
 	"report-service/internal/model"
 	"report-service/internal/repository"
 
@@ -13,13 +16,15 @@ import (
 type VoteService struct {
 	voteRepo   *repository.VoteRepository
 	reportRepo *repository.ReportRepository
+	rmq        *messaging.RabbitMQ
 }
 
 // Constructor for VoteService.
-func NewVoteService(voteRepo *repository.VoteRepository, reportRepo *repository.ReportRepository) *VoteService {
+func NewVoteService(voteRepo *repository.VoteRepository, reportRepo *repository.ReportRepository, rmq *messaging.RabbitMQ) *VoteService {
 	return &VoteService{
 		voteRepo:   voteRepo,
 		reportRepo: reportRepo,
+		rmq:        rmq,
 	}
 }
 
@@ -55,6 +60,29 @@ func (s *VoteService) CastVote(reportIDStr, userIDStr string, voteType model.Vot
 	newScore, err := s.voteRepo.VoteWithTransaction(reportID, userID, voteType)
 	if err != nil {
 		return nil, err
+	}
+
+	// Publish to RabbitMQ asynchronously
+	if s.rmq != nil {
+		go func() {
+			reporterIDStr := ""
+			if report.ReporterID != nil {
+				reporterIDStr = report.ReporterID.String()
+			}
+
+			msg := messaging.VoteReceivedMessage{
+				ReportID:    reportID.String(),
+				ReportTitle: report.Title,
+				ReporterID:  reporterIDStr,
+				VoterID:     userIDStr,
+				VoteType:    string(voteType),
+				NewScore:    newScore,
+				Timestamp:   time.Now().Unix(),
+			}
+			if err := s.rmq.PublishVoteReceived(msg); err != nil {
+				log.Printf("Failed to publish vote event: %v", err)
+			}
+		}()
 	}
 
 	return &model.VoteResponse{

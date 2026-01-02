@@ -8,6 +8,7 @@ import (
 type Config struct {
 	Server    ServerConfig    `json:"server"`
 	Database  DatabaseConfig  `json:"database"`
+	RabbitMQ  RabbitMQConfig  `json:"rabbitmq"`
 	Anonymous AnonymousConfig `json:"anonymous"`
 }
 
@@ -21,6 +22,13 @@ type DatabaseConfig struct {
 	User     string `json:"user"`
 	Password string `json:"password"`
 	DBName   string `json:"dbname"`
+}
+
+type RabbitMQConfig struct {
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	User     string `json:"user"`
+	Password string `json:"password"`
 }
 
 type AnonymousConfig struct {
