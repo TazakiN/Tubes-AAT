@@ -39,7 +39,6 @@ func (h *SSEHub) Run() {
 		select {
 		case client := <-h.register:
 			h.clients[client.UserID] = append(h.clients[client.UserID], client)
-			log.Printf("SSE client registered for user %s (total: %d)", client.UserID, len(h.clients[client.UserID]))
 
 		case client := <-h.unregister:
 			userClients := h.clients[client.UserID]
@@ -50,7 +49,6 @@ func (h *SSEHub) Run() {
 				}
 			}
 			close(client.Channel)
-			log.Printf("SSE client unregistered for user %s", client.UserID)
 
 		case notification := <-h.broadcast:
 			clients := h.clients[notification.UserID]
@@ -58,7 +56,7 @@ func (h *SSEHub) Run() {
 				select {
 				case client.Channel <- notification:
 				default:
-					log.Printf("Client channel full for user %s, skipping", notification.UserID)
+					// channel full, skip
 				}
 			}
 		}
@@ -110,12 +108,11 @@ func (c *NotificationConsumer) consume() {
 		default:
 			msgs, err := c.rmq.Consume()
 			if err != nil {
-				log.Printf("Failed to start consuming: %v. Retrying in 5s...", err)
+				log.Printf("consume error: %v, retrying...", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			log.Println("Notification consumer started")
 			c.processMessages(msgs)
 		}
 	}
@@ -128,7 +125,7 @@ func (c *NotificationConsumer) processMessages(msgs <-chan amqp.Delivery) {
 			return
 		case msg, ok := <-msgs:
 			if !ok {
-				log.Println("Message channel closed, will reconnect...")
+				log.Println("channel closed, reconnecting...")
 				return
 			}
 
@@ -138,9 +135,7 @@ func (c *NotificationConsumer) processMessages(msgs <-chan amqp.Delivery) {
 }
 
 func (c *NotificationConsumer) handleMessage(msg amqp.Delivery) {
-	// Determine message type by routing key
 	routingKey := msg.RoutingKey
-	log.Printf("Received message with routing key: %s", routingKey)
 
 	switch routingKey {
 	case RoutingKeyStatusUpdate:
@@ -150,7 +145,6 @@ func (c *NotificationConsumer) handleMessage(msg amqp.Delivery) {
 	case RoutingKeyVoteReceived:
 		c.handleVoteReceived(msg)
 	default:
-		log.Printf("Unknown routing key: %s", routingKey)
 		msg.Nack(false, false)
 	}
 }
@@ -158,33 +152,28 @@ func (c *NotificationConsumer) handleMessage(msg amqp.Delivery) {
 func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) {
 	var statusUpdate StatusUpdateMessage
 	if err := json.Unmarshal(msg.Body, &statusUpdate); err != nil {
-		log.Printf("Failed to unmarshal status update: %v", err)
+		log.Printf("unmarshal error: %v", err)
 		msg.Nack(false, false)
 		return
 	}
-
-	log.Printf("Processing status update for report %s", statusUpdate.ReportID)
 
 	reportID, err := uuid.Parse(statusUpdate.ReportID)
 	if err != nil {
-		log.Printf("Invalid report ID: %v", err)
 		msg.Nack(false, false)
 		return
 	}
-
-	// Save notification to database
 	err = c.notificationRepo.CreateStatusNotification(
 		reportID,
 		model.ReportStatus(statusUpdate.NewStatus),
 		statusUpdate.ReportTitle,
 	)
 	if err != nil {
-		log.Printf("Failed to create notification in DB: %v", err)
+		log.Printf("db error: %v", err)
 		msg.Nack(false, true)
 		return
 	}
 
-	// Push to SSE clients if reporter is known
+	// kirim ke reporter via SSE
 	if statusUpdate.ReporterID != "" {
 		reporterID, err := uuid.Parse(statusUpdate.ReporterID)
 		if err == nil {
@@ -198,53 +187,39 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) {
 				CreatedAt: time.Now(),
 			}
 			c.sseHub.SendToUser(notification)
-			log.Printf("SSE notification sent to user %s", reporterID)
 		}
 	}
 
 	msg.Ack(false)
-	log.Printf("Status update processed for report %s", statusUpdate.ReportID)
 }
 
 func (c *NotificationConsumer) handleReportCreated(msg amqp.Delivery) {
 	var reportCreated ReportCreatedMessage
 	if err := json.Unmarshal(msg.Body, &reportCreated); err != nil {
-		log.Printf("Failed to unmarshal report created: %v", err)
+		log.Printf("unmarshal error: %v", err)
 		msg.Nack(false, false)
 		return
 	}
 
-	log.Printf("Processing new report: %s (%s)", reportCreated.ReportTitle, reportCreated.ReportID)
-
-	// Here you could:
-	// 1. Notify admins of the relevant department
-	// 2. Update statistics/dashboards
-	// 3. Trigger other async processes
-
-	// For now, just log and acknowledge
+	// TODO: notify admins, update dashboards, etc.
 	msg.Ack(false)
-	log.Printf("Report created event processed: %s", reportCreated.ReportID)
 }
 
 func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) {
 	var voteReceived VoteReceivedMessage
 	if err := json.Unmarshal(msg.Body, &voteReceived); err != nil {
-		log.Printf("Failed to unmarshal vote received: %v", err)
+		log.Printf("unmarshal error: %v", err)
 		msg.Nack(false, false)
 		return
 	}
-
-	log.Printf("Processing vote for report %s: %s (new score: %d)",
-		voteReceived.ReportID, voteReceived.VoteType, voteReceived.NewScore)
 
 	reportID, err := uuid.Parse(voteReceived.ReportID)
 	if err != nil {
-		log.Printf("Invalid report ID: %v", err)
 		msg.Nack(false, false)
 		return
 	}
 
-	// Notify the report owner about the vote (if not anonymous)
+	// kirim notifikasi ke pemilik report (skip jika vote sendiri)
 	if voteReceived.ReporterID != "" && voteReceived.ReporterID != voteReceived.VoterID {
 		reporterID, err := uuid.Parse(voteReceived.ReporterID)
 		if err == nil {
@@ -265,17 +240,14 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) {
 
 			// Save to database
 			if err := c.notificationRepo.Create(notification); err != nil {
-				log.Printf("Failed to save vote notification: %v", err)
+				log.Printf("db error: %v", err)
 			}
 
-			// Push to SSE
 			c.sseHub.SendToUser(notification)
-			log.Printf("Vote notification sent to user %s", reporterID)
 		}
 	}
 
 	msg.Ack(false)
-	log.Printf("Vote event processed for report %s", voteReceived.ReportID)
 }
 
 func (c *NotificationConsumer) Stop() {

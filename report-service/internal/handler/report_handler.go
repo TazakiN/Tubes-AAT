@@ -20,7 +20,6 @@ func NewReportHandler(reportService *service.ReportService) *ReportHandler {
 	return &ReportHandler{reportService: reportService}
 }
 
-// Handles POST / - creates a new report with optional new category creation.
 func (h *ReportHandler) CreateReport(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	userName := c.GetHeader("X-User-Name")
@@ -80,7 +79,6 @@ func (h *ReportHandler) CreateReport(c *gin.Context) {
 	})
 }
 
-// Handles GET /public - returns public reports with optional search and category filter.
 func (h *ReportHandler) GetPublicReports(c *gin.Context) {
 	search := c.Query("search")
 	categoryIDStr := c.Query("category_id")
@@ -112,7 +110,6 @@ func (h *ReportHandler) GetPublicReports(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles GET / - returns reports based on user role and department permissions.
 func (h *ReportHandler) GetReports(c *gin.Context) {
 	userRole := c.GetHeader("X-User-Role")
 	userDept := c.GetHeader("X-User-Department")
@@ -136,7 +133,6 @@ func (h *ReportHandler) GetReports(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles GET /my - returns authenticated user's reports with optional search and category filter.
 func (h *ReportHandler) GetMyReports(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 
@@ -176,7 +172,6 @@ func (h *ReportHandler) GetMyReports(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles GET /:id - returns a single report by ID with RBAC validation.
 func (h *ReportHandler) GetReportByID(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	userRole := c.GetHeader("X-User-Role")
@@ -207,7 +202,6 @@ func (h *ReportHandler) GetReportByID(c *gin.Context) {
 	c.JSON(http.StatusOK, report)
 }
 
-// Handles PATCH /:id/status - updates report status (admin only) and triggers notification.
 func (h *ReportHandler) UpdateStatus(c *gin.Context) {
 	userRole := c.GetHeader("X-User-Role")
 	userDept := c.GetHeader("X-User-Department")
@@ -256,12 +250,10 @@ func (h *ReportHandler) UpdateStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Status updated successfully"})
 }
 
-// Health check endpoint for service status monitoring.
 func (h *ReportHandler) Health(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "healthy"})
 }
 
-// Handles PUT /:id - updates a report's title and/or description (owner only).
 func (h *ReportHandler) UpdateReport(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -298,7 +290,6 @@ func (h *ReportHandler) UpdateReport(c *gin.Context) {
 	})
 }
 
-// Handles GET /categories - returns all available report categories.
 func (h *ReportHandler) GetCategories(c *gin.Context) {
 	categories, err := h.reportService.GetCategories()
 	if err != nil {
@@ -308,7 +299,6 @@ func (h *ReportHandler) GetCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"categories": categories})
 }
 
-// Handles POST /categories - creates a new category or returns existing one (case-insensitive match).
 func (h *ReportHandler) CreateCategory(c *gin.Context) {
 	var req model.CreateCategoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -338,4 +328,3 @@ func (h *ReportHandler) CreateCategory(c *gin.Context) {
 		"category": category,
 	})
 }
-

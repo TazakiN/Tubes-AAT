@@ -88,16 +88,15 @@ func (r *RabbitMQ) connect() error {
 
 	r.conn, err = amqp.Dial(r.url)
 	if err != nil {
-		return fmt.Errorf("failed to connect to RabbitMQ: %w", err)
+		return fmt.Errorf("dial: %w", err)
 	}
 
 	r.channel, err = r.conn.Channel()
 	if err != nil {
 		r.conn.Close()
-		return fmt.Errorf("failed to open channel: %w", err)
+		return fmt.Errorf("channel: %w", err)
 	}
 
-	// Declare exchange
 	err = r.channel.ExchangeDeclare(
 		ExchangeName,
 		"topic",
@@ -108,10 +107,9 @@ func (r *RabbitMQ) connect() error {
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to declare exchange: %w", err)
+		return fmt.Errorf("exchange declare: %w", err)
 	}
 
-	// Declare queue
 	_, err = r.channel.QueueDeclare(
 		QueueName,
 		true,  // durable
@@ -121,10 +119,9 @@ func (r *RabbitMQ) connect() error {
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to declare queue: %w", err)
+		return fmt.Errorf("queue declare: %w", err)
 	}
 
-	// Bind queue to exchange with multiple routing keys
 	routingKeys := []string{RoutingKeyStatusUpdate, RoutingKeyReportCreated, RoutingKeyVoteReceived}
 	for _, key := range routingKeys {
 		err = r.channel.QueueBind(
@@ -135,11 +132,11 @@ func (r *RabbitMQ) connect() error {
 			nil,
 		)
 		if err != nil {
-			return fmt.Errorf("failed to bind queue with key %s: %w", key, err)
+			return fmt.Errorf("bind %s: %w", key, err)
 		}
 	}
 
-	log.Println("RabbitMQ connected and configured with all routing keys")
+	log.Println("rabbitmq: connected")
 	return nil
 }
 
@@ -150,13 +147,13 @@ func (r *RabbitMQ) handleReconnect() {
 			return
 		case err := <-r.conn.NotifyClose(make(chan *amqp.Error)):
 			if err != nil {
-				log.Printf("RabbitMQ connection lost: %v. Reconnecting...", err)
+				log.Printf("rabbitmq: disconnected: %v", err)
 			}
 
 			r.mu.Lock()
 			for {
 				if err := r.connect(); err != nil {
-					log.Printf("Failed to reconnect: %v. Retrying in %v...", err, reconnectDelay)
+					log.Printf("rabbitmq: reconnect failed: %v", err)
 					time.Sleep(reconnectDelay)
 					continue
 				}
@@ -167,8 +164,7 @@ func (r *RabbitMQ) handleReconnect() {
 	}
 }
 
-// Generic publish function
-func (r *RabbitMQ) publish(routingKey string, message interface{}, logMsg string) error {
+func (r *RabbitMQ) publish(routingKey string, message interface{}) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -200,20 +196,19 @@ func (r *RabbitMQ) publish(routingKey string, message interface{}, logMsg string
 		return fmt.Errorf("failed to publish message: %w", err)
 	}
 
-	log.Printf("%s", logMsg)
 	return nil
 }
 
 func (r *RabbitMQ) PublishStatusUpdate(msg StatusUpdateMessage) error {
-	return r.publish(RoutingKeyStatusUpdate, msg, fmt.Sprintf("Published status update for report %s", msg.ReportID))
+	return r.publish(RoutingKeyStatusUpdate, msg)
 }
 
 func (r *RabbitMQ) PublishReportCreated(msg ReportCreatedMessage) error {
-	return r.publish(RoutingKeyReportCreated, msg, fmt.Sprintf("Published report created: %s", msg.ReportID))
+	return r.publish(RoutingKeyReportCreated, msg)
 }
 
 func (r *RabbitMQ) PublishVoteReceived(msg VoteReceivedMessage) error {
-	return r.publish(RoutingKeyVoteReceived, msg, fmt.Sprintf("Published vote received for report %s", msg.ReportID))
+	return r.publish(RoutingKeyVoteReceived, msg)
 }
 
 func (r *RabbitMQ) Consume() (<-chan amqp.Delivery, error) {
@@ -252,6 +247,4 @@ func (r *RabbitMQ) Close() {
 	if r.conn != nil {
 		r.conn.Close()
 	}
-
-	log.Println("RabbitMQ connection closed")
 }

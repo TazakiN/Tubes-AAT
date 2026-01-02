@@ -9,17 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// HTTP handler for vote-related endpoints.
 type VoteHandler struct {
 	voteService *service.VoteService
 }
 
-// Constructor for VoteHandler.
 func NewVoteHandler(voteService *service.VoteService) *VoteHandler {
 	return &VoteHandler{voteService: voteService}
 }
 
-// Handles POST /:id/vote - allows users to upvote or downvote a public report.
 func (h *VoteHandler) CastVote(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -54,7 +51,6 @@ func (h *VoteHandler) CastVote(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles DELETE /:id/vote - allows users to remove their vote from a report.
 func (h *VoteHandler) RemoveVote(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {
@@ -77,7 +73,6 @@ func (h *VoteHandler) RemoveVote(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// Handles GET /:id/vote - returns the user's current vote on a report.
 func (h *VoteHandler) GetVote(c *gin.Context) {
 	userID := c.GetHeader("X-User-ID")
 	if userID == "" {

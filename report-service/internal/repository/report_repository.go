@@ -42,7 +42,6 @@ func (r *ReportRepository) Create(report *model.Report) error {
 	return err
 }
 
-// Returns the database connection for transaction usage.
 func (r *ReportRepository) GetDB() *sql.DB {
 	return r.db
 }
