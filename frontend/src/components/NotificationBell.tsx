@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Bell } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
+import { useServiceWorker } from "@/hooks/useServiceWorker";
 import type { Notification } from "@/types";
 
 interface NotificationBellProps {
@@ -17,9 +19,12 @@ export default function NotificationBell({
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { sendNotification, requestPermission } = useServiceWorker();
 
   useEffect(() => {
     if (user) {
+      requestPermission();
+
       loadNotifications();
       // Setup SSE for real-time notifications
       const eventSource = new EventSource(
@@ -31,6 +36,13 @@ export default function NotificationBell({
           const notification = JSON.parse(event.data) as Notification;
           setNotifications((prev) => [notification, ...prev]);
           setUnreadCount((prev) => prev + 1);
+
+          sendNotification(
+            notification.title,
+            notification.message,
+            notification.id
+          );
+
           if (onNewNotification) {
             onNewNotification(notification);
           }
@@ -46,7 +58,7 @@ export default function NotificationBell({
 
       return () => eventSource.close();
     }
-  }, [user, token]);
+  }, [user, token, sendNotification, requestPermission]);
 
   const loadNotifications = async () => {
     setIsLoading(true);
@@ -110,7 +122,7 @@ export default function NotificationBell({
           padding: "0.5rem",
         }}
       >
-        🔔
+        <Bell size={20} color="var(--text-primary)" />
         {unreadCount > 0 && (
           <span className="notification-count">
             {unreadCount > 9 ? "9+" : unreadCount}
