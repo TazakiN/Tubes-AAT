@@ -34,6 +34,22 @@ docker-compose ps
 | **API Gateway** | <http://localhost:8080/api/v1> | — |
 | **RabbitMQ Management** | <http://localhost:15672> | cityconnect / cityconnect_secret |
 | **Grafana** | <http://localhost:3050> | admin / admin |
+| **Loki** | <http://localhost:3100> | — |
+
+### Observability Dashboards
+
+#### Grafana (Logs & Metrics)
+
+1. Open <http://localhost:3050>
+2. Login with `admin` / `admin`
+3. Go to **Explore** → Select **Loki** as data source
+4. Query logs: `{container_name="report-service"}` or `{container_name="auth-service"}`
+
+#### RabbitMQ (Message Queues)
+
+1. Open <http://localhost:15672>
+2. Login with `cityconnect` / `cityconnect_secret`
+3. View queues: **Queues** tab shows `queue.status_updates`, `queue.report_created`, `queue.vote_received`
 
 ## Demo Accounts
 
@@ -48,19 +64,19 @@ docker-compose ps
 
 ### For Citizens (Warga)
 
-- ✅ Register & Login with JWT authentication
-- ✅ Create reports with public/private/anonymous privacy levels
-- ✅ Search and filter reports by keyword and category
-- ✅ Upvote/downvote public reports
-- ✅ Real-time notifications via SSE when report status changes
-- ✅ Create custom categories for reports
+- Register & Login with JWT authentication
+- Create reports with public/private/anonymous privacy levels
+- Search and filter reports by keyword and category
+- Upvote/downvote public reports
+- Real-time notifications via SSE when report status changes
+- Create custom categories for reports
 
 ### For Government Admins
 
-- ✅ View reports filtered by department
-- ✅ Update report status (pending → accepted → in_progress → completed/rejected)
-- ✅ Reports cannot be deleted (audit trail)
-- ✅ Anonymous reporter identity hidden
+- View reports filtered by department
+- Update report status (pending → accepted → in_progress → completed/rejected)
+- Reports cannot be deleted (audit trail)
+- Anonymous reporter identity hidden
 
 ## Architecture
 
