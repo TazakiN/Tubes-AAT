@@ -3,7 +3,7 @@ services:
   gateway:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      - "8880:80"
     volumes:
       - ./gateway:/etc/nginx/custom:ro
     command: nginx -g 'daemon off;' -c /etc/nginx/custom/nginx.conf
