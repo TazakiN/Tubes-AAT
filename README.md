@@ -102,6 +102,14 @@ docker-compose ps
 5. Consumer broadcasts to SSE Hub
 6. SSE Hub pushes to connected frontend clients
 
+### RabbitMQ Multiple Queues
+
+| Queue | Routing Key | Purpose |
+|-------|-------------|----------|
+| `queue.status_updates` | `report.status.updated` | Status change notifications |
+| `queue.report_created` | `report.created` | New report events |
+| `queue.vote_received` | `report.vote.received` | Vote notifications |
+
 ## API Endpoints
 
 ### Authentication
@@ -226,7 +234,7 @@ docker-compose logs -f auth-service
 | Backend | Go (Gin) |
 | Frontend | Next.js 14 |
 | Database | PostgreSQL 15 |
-| Message Broker | RabbitMQ 3.12 |
+| Message Broker | RabbitMQ 3.12 (Topic Exchange) |
 | Real-time | SSE |
 | Auth | JWT |
 | Logging | Loki + Promtail |

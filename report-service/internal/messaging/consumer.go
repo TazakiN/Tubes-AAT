@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"report-service/internal/model"
@@ -85,6 +86,7 @@ type NotificationConsumer struct {
 	notificationRepo *repository.NotificationRepository
 	sseHub           *SSEHub
 	done             chan struct{}
+	wg               sync.WaitGroup
 }
 
 func NewNotificationConsumer(rmq *RabbitMQ, notificationRepo *repository.NotificationRepository, sseHub *SSEHub) *NotificationConsumer {
@@ -97,55 +99,44 @@ func NewNotificationConsumer(rmq *RabbitMQ, notificationRepo *repository.Notific
 }
 
 func (c *NotificationConsumer) Start() {
-	go c.consume()
+	c.wg.Add(3)
+	go c.consumeQueue(QueueStatusUpdates, c.handleStatusUpdate)
+	go c.consumeQueue(QueueReportCreated, c.handleReportCreated)
+	go c.consumeQueue(QueueVoteReceived, c.handleVoteReceived)
 }
 
-func (c *NotificationConsumer) consume() {
+func (c *NotificationConsumer) consumeQueue(queueName string, handler func(amqp.Delivery)) {
+	defer c.wg.Done()
+
 	for {
 		select {
 		case <-c.done:
 			return
 		default:
-			msgs, err := c.rmq.Consume()
+			msgs, err := c.rmq.ConsumeQueue(queueName)
 			if err != nil {
-				log.Printf("consume error: %v, retrying...", err)
+				log.Printf("consumer %s: error %v, retrying...", queueName, err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			c.processMessages(msgs)
+			c.processQueue(queueName, msgs, handler)
 		}
 	}
 }
 
-func (c *NotificationConsumer) processMessages(msgs <-chan amqp.Delivery) {
+func (c *NotificationConsumer) processQueue(queueName string, msgs <-chan amqp.Delivery, handler func(amqp.Delivery)) {
 	for {
 		select {
 		case <-c.done:
 			return
 		case msg, ok := <-msgs:
 			if !ok {
-				log.Println("channel closed, reconnecting...")
+				log.Printf("consumer %s: channel closed, reconnecting...", queueName)
 				return
 			}
-
-			c.handleMessage(msg)
+			handler(msg)
 		}
-	}
-}
-
-func (c *NotificationConsumer) handleMessage(msg amqp.Delivery) {
-	routingKey := msg.RoutingKey
-
-	switch routingKey {
-	case RoutingKeyStatusUpdate:
-		c.handleStatusUpdate(msg)
-	case RoutingKeyReportCreated:
-		c.handleReportCreated(msg)
-	case RoutingKeyVoteReceived:
-		c.handleVoteReceived(msg)
-	default:
-		msg.Nack(false, false)
 	}
 }
 
@@ -173,7 +164,6 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) {
 		return
 	}
 
-	// kirim ke reporter via SSE
 	if statusUpdate.ReporterID != "" {
 		reporterID, err := uuid.Parse(statusUpdate.ReporterID)
 		if err == nil {
@@ -219,7 +209,6 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) {
 		return
 	}
 
-	// kirim notifikasi ke pemilik report (skip jika vote sendiri)
 	if voteReceived.ReporterID != "" && voteReceived.ReporterID != voteReceived.VoterID {
 		reporterID, err := uuid.Parse(voteReceived.ReporterID)
 		if err == nil {
@@ -252,4 +241,5 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) {
 
 func (c *NotificationConsumer) Stop() {
 	close(c.done)
+	c.wg.Wait()
 }

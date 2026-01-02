@@ -12,8 +12,12 @@ import (
 )
 
 const (
-	ExchangeName            = "cityconnect.notifications"
-	QueueName               = "notification.events"
+	ExchangeName = "cityconnect.notifications"
+
+	QueueStatusUpdates = "queue.status_updates"
+	QueueReportCreated = "queue.report_created"
+	QueueVoteReceived  = "queue.vote_received"
+
 	RoutingKeyStatusUpdate  = "report.status.updated"
 	RoutingKeyReportCreated = "report.created"
 	RoutingKeyVoteReceived  = "report.vote.received"
@@ -22,12 +26,16 @@ const (
 	publishTimeout = 5 * time.Second
 )
 
-// Message types
-const (
-	MessageTypeStatusUpdate  = "status_update"
-	MessageTypeReportCreated = "report_created"
-	MessageTypeVoteReceived  = "vote_received"
-)
+type QueueBinding struct {
+	QueueName  string
+	RoutingKey string
+}
+
+var QueueBindings = []QueueBinding{
+	{QueueStatusUpdates, RoutingKeyStatusUpdate},
+	{QueueReportCreated, RoutingKeyReportCreated},
+	{QueueVoteReceived, RoutingKeyVoteReceived},
+}
 
 type StatusUpdateMessage struct {
 	ReportID    string `json:"report_id"`
@@ -110,29 +118,28 @@ func (r *RabbitMQ) connect() error {
 		return fmt.Errorf("exchange declare: %w", err)
 	}
 
-	_, err = r.channel.QueueDeclare(
-		QueueName,
-		true,  // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,
-	)
-	if err != nil {
-		return fmt.Errorf("queue declare: %w", err)
-	}
+	for _, qb := range QueueBindings {
+		_, err = r.channel.QueueDeclare(
+			qb.QueueName,
+			true,  // durable
+			false, // delete when unused
+			false, // exclusive
+			false, // no-wait
+			nil,
+		)
+		if err != nil {
+			return fmt.Errorf("queue declare %s: %w", qb.QueueName, err)
+		}
 
-	routingKeys := []string{RoutingKeyStatusUpdate, RoutingKeyReportCreated, RoutingKeyVoteReceived}
-	for _, key := range routingKeys {
 		err = r.channel.QueueBind(
-			QueueName,
-			key,
+			qb.QueueName,
+			qb.RoutingKey,
 			ExchangeName,
 			false,
 			nil,
 		)
 		if err != nil {
-			return fmt.Errorf("bind %s: %w", key, err)
+			return fmt.Errorf("bind %s->%s: %w", qb.QueueName, qb.RoutingKey, err)
 		}
 	}
 
@@ -174,7 +181,7 @@ func (r *RabbitMQ) publish(routingKey string, message interface{}) error {
 
 	body, err := json.Marshal(message)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
@@ -184,8 +191,8 @@ func (r *RabbitMQ) publish(routingKey string, message interface{}) error {
 		ctx,
 		ExchangeName,
 		routingKey,
-		false, // mandatory
-		false, // immediate
+		false,
+		false,
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
@@ -193,7 +200,7 @@ func (r *RabbitMQ) publish(routingKey string, message interface{}) error {
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to publish message: %w", err)
+		return fmt.Errorf("publish: %w", err)
 	}
 
 	return nil
@@ -211,7 +218,7 @@ func (r *RabbitMQ) PublishVoteReceived(msg VoteReceivedMessage) error {
 	return r.publish(RoutingKeyVoteReceived, msg)
 }
 
-func (r *RabbitMQ) Consume() (<-chan amqp.Delivery, error) {
+func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -220,16 +227,16 @@ func (r *RabbitMQ) Consume() (<-chan amqp.Delivery, error) {
 	}
 
 	msgs, err := r.channel.Consume(
-		QueueName,
-		"",    // consumer tag
-		false, // auto-ack (false = manual ack for reliability)
+		queueName,
+		"",    // consumer tag (auto-generated)
+		false, // auto-ack
 		false, // exclusive
 		false, // no-local
 		false, // no-wait
 		nil,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to register consumer: %w", err)
+		return nil, fmt.Errorf("consume %s: %w", queueName, err)
 	}
 
 	return msgs, nil
