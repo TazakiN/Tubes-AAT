@@ -26,7 +26,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	// Validate role
 	validRoles := map[model.Role]bool{
 		model.RoleWarga:              true,
 		model.RoleAdminKebersihan:    true,
@@ -73,7 +72,6 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 		return
 	}
 
-	// Extract token from "Bearer <token>"
 	parts := strings.Split(authHeader, " ")
 	if len(parts) != 2 || parts[0] != "Bearer" {
 		c.JSON(http.StatusUnauthorized, model.ValidateResponse{Valid: false})
@@ -86,7 +84,6 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 		return
 	}
 
-	// Set headers for upstream services (Nginx will forward these)
 	if response.Valid {
 		c.Header("X-User-ID", response.UserID)
 		c.Header("X-User-Role", response.Role)
@@ -98,10 +95,8 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
-	// Try to get user ID from header (set by Nginx after validation)
 	userIDStr := c.GetHeader("X-User-ID")
 
-	// If not from header, try to parse from JWT token
 	if userIDStr == "" {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {

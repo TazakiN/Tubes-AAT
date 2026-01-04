@@ -41,7 +41,6 @@ func (s *AuthService) Register(req *model.RegisterRequest) (*model.User, error) 
 		return nil, err
 	}
 
-	// Map role to department
 	var department *string
 	switch req.Role {
 	case model.RoleAdminKebersihan:
@@ -78,7 +77,6 @@ func (s *AuthService) Login(req *model.LoginRequest) (*model.LoginResponse, erro
 		return nil, errors.New("invalid email or password")
 	}
 
-	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		return nil, errors.New("invalid email or password")
 	}

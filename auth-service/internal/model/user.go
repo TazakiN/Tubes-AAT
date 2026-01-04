@@ -18,14 +18,13 @@ const (
 type User struct {
 	ID           uuid.UUID  `json:"id"`
 	Email        string     `json:"email"`
-	PasswordHash string     `json:"-"` // Never expose in JSON
+	PasswordHash string     `json:"-"` 
 	Name         string     `json:"name"`
 	Role         Role       `json:"role"`
 	Department   *string    `json:"department,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 }
 
-// Request/Response DTOs
 type RegisterRequest struct {
 	Email      string `json:"email" binding:"required,email"`
 	Password   string `json:"password" binding:"required,min=6"`
