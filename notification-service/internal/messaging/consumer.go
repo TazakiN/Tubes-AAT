@@ -120,7 +120,7 @@ func (c *NotificationConsumer) Start() {
 	go c.consumeQueue(QueueStatusUpdates, c.handleStatusUpdate)
 	go c.consumeQueue(QueueReportCreated, c.handleReportCreated)
 	go c.consumeQueue(QueueVoteReceived, c.handleVoteReceived)
-	log.Println("consumer: all queue consumers started")
+	log.Println("consumers started")
 }
 
 func (c *NotificationConsumer) consumeQueue(queueName string, handler func(amqp.Delivery) error) {
@@ -160,26 +160,23 @@ func (c *NotificationConsumer) processQueue(queueName string, msgs <-chan amqp.D
 	}
 }
 
-// processMessageWithRetry implements retry with exponential backoff
+// processMessageWithRetry handles retry with backoff
 func (c *NotificationConsumer) processMessageWithRetry(queueName string, msg amqp.Delivery, handler func(amqp.Delivery) error) {
-	// Check idempotency - use MessageId or generate from body hash
 	messageID := msg.MessageId
 	if messageID == "" {
 		messageID = fmt.Sprintf("%x", msg.Body[:min(32, len(msg.Body))])
 	}
 
-	// Check if message was already processed
 	processed, err := c.notificationRepo.IsMessageProcessed(messageID)
 	if err != nil {
-		log.Printf("consumer %s: idempotency check failed: %v", queueName, err)
+		log.Printf("%s: idempotency check failed: %v", queueName, err)
 	}
 	if processed {
-		log.Printf("consumer %s: message %s already processed, skipping", queueName, messageID)
+		log.Printf("%s: %s already processed", queueName, messageID)
 		msg.Ack(false)
 		return
 	}
 
-	// Retry with exponential backoff
 	err = retry.Do(
 		func() error {
 			return handler(msg)
@@ -189,49 +186,43 @@ func (c *NotificationConsumer) processMessageWithRetry(queueName string, msg amq
 		retry.MaxDelay(maxDelay),
 		retry.DelayType(retry.BackOffDelay),
 		retry.OnRetry(func(n uint, err error) {
-			log.Printf("consumer %s: retry %d/%d: %v", queueName, n+1, maxRetryAttempts, err)
+			log.Printf("%s: retry %d: %v", queueName, n+1, err)
 		}),
 	)
 
 	if err != nil {
-		log.Printf("consumer %s: message failed after %d retries: %v, sending to DLQ", queueName, maxRetryAttempts, err)
-		// Nack without requeue - will go to DLQ due to x-dead-letter-exchange
+		log.Printf("%s: failed, sending to DLQ: %v", queueName, err)
 		msg.Nack(false, false)
 		return
 	}
 
-	// Mark message as processed for idempotency
 	if err := c.notificationRepo.MarkMessageProcessed(messageID); err != nil {
-		log.Printf("consumer %s: failed to mark message processed: %v", queueName, err)
+		log.Printf("%s: mark processed failed: %v", queueName, err)
 	}
 
 	msg.Ack(false)
-	log.Printf("consumer %s: message processed successfully", queueName)
 }
 
 func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) error {
 	var statusUpdate model.StatusUpdateMessage
 	if err := json.Unmarshal(msg.Body, &statusUpdate); err != nil {
-		// Don't retry unmarshal errors - they'll never succeed
-		log.Printf("handleStatusUpdate: unmarshal error (non-retryable): %v", err)
-		return nil // Return nil to ACK and avoid DLQ for bad message format
+		log.Printf("status_update: bad json: %v", err)
+		return nil
 	}
 
 	reportID, err := uuid.Parse(statusUpdate.ReportID)
 	if err != nil {
-		log.Printf("handleStatusUpdate: invalid report_id (non-retryable): %v", err)
+		log.Printf("status_update: bad report_id: %v", err)
 		return nil
 	}
 
-	// Create notification in database - this is retryable
 	err = c.notificationRepo.CreateStatusNotification(
 		reportID,
 		model.ReportStatus(statusUpdate.NewStatus),
 		statusUpdate.ReportTitle,
 	)
 	if err != nil {
-		log.Printf("handleStatusUpdate: db error (retryable): %v", err)
-		return err // Return error to trigger retry
+		return err
 	}
 
 	// Send SSE notification
@@ -257,31 +248,29 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) error {
 func (c *NotificationConsumer) handleReportCreated(msg amqp.Delivery) error {
 	var reportCreated model.ReportCreatedMessage
 	if err := json.Unmarshal(msg.Body, &reportCreated); err != nil {
-		log.Printf("handleReportCreated: unmarshal error (non-retryable): %v", err)
+		log.Printf("report_created: bad json: %v", err)
 		return nil
 	}
 
-	log.Printf("handleReportCreated: report %s created by %s", reportCreated.ReportID, reportCreated.ReporterName)
-
-	// TODO: Implement admin notification logic
-	// For now, just log and acknowledge
+	log.Printf("report_created: %s by %s", reportCreated.ReportID, reportCreated.ReporterName)
+	// TODO: notify admins
 	return nil
 }
 
 func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) error {
 	var voteReceived model.VoteReceivedMessage
 	if err := json.Unmarshal(msg.Body, &voteReceived); err != nil {
-		log.Printf("handleVoteReceived: unmarshal error (non-retryable): %v", err)
+		log.Printf("vote: bad json: %v", err)
 		return nil
 	}
 
 	reportID, err := uuid.Parse(voteReceived.ReportID)
 	if err != nil {
-		log.Printf("handleVoteReceived: invalid report_id (non-retryable): %v", err)
+		log.Printf("vote: bad report_id: %v", err)
 		return nil
 	}
 
-	// Don't notify if voter is the reporter
+	// skip if voter is reporter
 	if voteReceived.ReporterID != "" && voteReceived.ReporterID != voteReceived.VoterID {
 		reporterID, err := uuid.Parse(voteReceived.ReporterID)
 		if err == nil {
@@ -300,9 +289,7 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) error {
 				CreatedAt: time.Now(),
 			}
 
-			// Save to database - retryable
 			if err := c.notificationRepo.Create(notification); err != nil {
-				log.Printf("handleVoteReceived: db error (retryable): %v", err)
 				return err
 			}
 
@@ -315,10 +302,9 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) error {
 }
 
 func (c *NotificationConsumer) Stop() {
-	log.Println("consumer: stopping all consumers...")
 	close(c.done)
 	c.wg.Wait()
-	log.Println("consumer: all consumers stopped")
+	log.Println("consumers stopped")
 }
 
 func min(a, b int) int {

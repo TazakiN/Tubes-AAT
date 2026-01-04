@@ -42,7 +42,7 @@ func (w *OutboxWorker) Start() {
 	w.wg.Add(2)
 	go w.processLoop()
 	go w.cleanupLoop()
-	log.Println("outbox worker: started")
+	log.Println("outbox: started")
 }
 
 // processLoop continuously processes pending outbox messages
@@ -55,7 +55,6 @@ func (w *OutboxWorker) processLoop() {
 	for {
 		select {
 		case <-w.done:
-			log.Println("outbox worker: process loop stopping")
 			return
 		case <-ticker.C:
 			w.processPendingMessages()
@@ -67,7 +66,7 @@ func (w *OutboxWorker) processLoop() {
 func (w *OutboxWorker) processPendingMessages() {
 	messages, err := w.outboxRepo.GetPendingMessages(batchSize)
 	if err != nil {
-		log.Printf("outbox worker: failed to get pending messages: %v", err)
+		log.Printf("outbox: get pending: %v", err)
 		return
 	}
 
@@ -75,19 +74,15 @@ func (w *OutboxWorker) processPendingMessages() {
 		return
 	}
 
-	log.Printf("outbox worker: processing %d pending messages", len(messages))
-
 	for _, msg := range messages {
 		if err := w.publishWithConfirm(msg.RoutingKey, msg.Payload); err != nil {
-			log.Printf("outbox worker: failed to publish message %s: %v", msg.ID, err)
+			log.Printf("outbox: publish %s: %v", msg.ID, err)
 			w.outboxRepo.MarkAsFailed(msg.ID, err.Error())
 			continue
 		}
 
 		if err := w.outboxRepo.MarkAsPublished(msg.ID); err != nil {
-			log.Printf("outbox worker: failed to mark message %s as published: %v", msg.ID, err)
-		} else {
-			log.Printf("outbox worker: message %s published successfully", msg.ID)
+			log.Printf("outbox: mark published %s: %v", msg.ID, err)
 		}
 	}
 }
@@ -150,25 +145,22 @@ func (w *OutboxWorker) cleanupLoop() {
 	for {
 		select {
 		case <-w.done:
-			log.Println("outbox worker: cleanup loop stopping")
 			return
 		case <-ticker.C:
 			deleted, err := w.outboxRepo.DeletePublished(publishedRetention)
 			if err != nil {
-				log.Printf("outbox worker: cleanup failed: %v", err)
+				log.Printf("outbox: cleanup: %v", err)
 			} else if deleted > 0 {
-				log.Printf("outbox worker: cleaned up %d old published messages", deleted)
+				log.Printf("outbox: cleaned %d old messages", deleted)
 			}
 		}
 	}
 }
 
-// Stop gracefully stops the outbox worker
 func (w *OutboxWorker) Stop() {
-	log.Println("outbox worker: stopping...")
 	close(w.done)
 	w.wg.Wait()
-	log.Println("outbox worker: stopped")
+	log.Println("outbox: stopped")
 }
 
 // GetStats returns outbox statistics

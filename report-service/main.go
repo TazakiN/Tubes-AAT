@@ -19,10 +19,7 @@ import (
 )
 
 func main() {
-	log.Println("==============================================")
-	log.Println("  REPORT SERVICE - Starting Up")
-	log.Println("  Features: Outbox Pattern, Publisher Confirms")
-	log.Println("==============================================")
+	log.Println("report-service starting...")
 
 	cfg, err := config.LoadConfig("config/config.json")
 	if err != nil {
@@ -45,9 +42,9 @@ func main() {
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
+		log.Fatalf("db ping: %v", err)
 	}
-	log.Println("✓ Connected to database")
+	log.Println("db connected")
 
 	// Connect to RabbitMQ
 	rmq, err := messaging.NewRabbitMQ(
@@ -60,7 +57,7 @@ func main() {
 		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
 	defer rmq.Close()
-	log.Println("✓ Connected to RabbitMQ")
+	log.Println("rabbitmq connected")
 
 	// Initialize repositories
 	reportRepo := repository.NewReportRepository(db)
@@ -70,7 +67,6 @@ func main() {
 	// Start outbox worker (replaces direct async publishing)
 	outboxWorker := messaging.NewOutboxWorker(outboxRepo, rmq)
 	outboxWorker.Start()
-	log.Println("✓ Outbox worker started (Publisher Confirms enabled)")
 
 	// Initialize services with outbox pattern
 	reportService := service.NewReportService(reportRepo, outboxRepo, cfg.Anonymous, rmq, db)
@@ -127,10 +123,7 @@ func main() {
 	}()
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
-	log.Println("==============================================")
-	log.Printf("  Report service listening on %s", addr)
-	log.Println("  NOTE: Consumer moved to notification-service")
-	log.Println("==============================================")
+	log.Printf("listening on %s", addr)
 
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

@@ -127,28 +127,16 @@ func (h *NotificationHandler) Health(c *gin.Context) {
 // HealthCheck returns detailed health status
 func (h *NotificationHandler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"status":  "healthy",
+		"status":  "ok",
 		"service": "notification-service",
 		"version": "1.0.0",
-		"features": []string{
-			"SSE real-time notifications",
-			"Dead Letter Queue (DLQ)",
-			"Retry with exponential backoff",
-			"Message idempotency",
-		},
 	})
 }
 
-// GetDLQStats returns stats about DLQ (placeholder for future monitoring)
+// GetDLQStats returns DLQ stats (stub)
 func (h *NotificationHandler) GetDLQStats(c *gin.Context) {
-	// This would be implemented to query RabbitMQ management API
 	c.JSON(http.StatusOK, gin.H{
-		"message": "DLQ stats endpoint - implement with RabbitMQ management API",
-		"dlq_queues": []string{
-			"queue.status_updates.dlq",
-			"queue.report_created.dlq",
-			"queue.vote_received.dlq",
-		},
+		"note": "query RabbitMQ management API directly",
 	})
 }
 

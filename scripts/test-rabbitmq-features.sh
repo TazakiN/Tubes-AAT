@@ -219,20 +219,15 @@ section "TEST SUMMARY"
 
 echo -e "${CYAN}"
 cat << 'EOF'
-Features Tested:
-  ✓ Service health checks (report-service, notification-service)
-  ✓ Outbox pattern (message saved to DB before publish)
-  ✓ Report creation triggers queue.report_created
-  ✓ Status update triggers queue.status_updates
-  ✓ Vote triggers queue.vote_received
-  ✓ Dead Letter Queues configured for failed messages
-  ✓ Notification service consuming from queues
+Tested:
+- Service health
+- Outbox pattern  
+- Queue triggers
+- DLQ config
+- Consumer
 
-Architecture:
-  report-service (publisher) → RabbitMQ → notification-service (consumer)
-                    ↓
-              outbox_messages (transactional)
+DLQs with 0 consumers is expected.
 EOF
 echo -e "${NC}"
 
-echo "Test completed at $(date '+%Y-%m-%d %H:%M:%S')"
+echo "Done at $(date '+%H:%M:%S')"

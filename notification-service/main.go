@@ -19,10 +19,7 @@ import (
 )
 
 func main() {
-	log.Println("==============================================")
-	log.Println("  NOTIFICATION SERVICE - Starting Up")
-	log.Println("  Features: DLQ, Retry, Idempotency, SSE")
-	log.Println("==============================================")
+	log.Println("notification-service starting...")
 
 	cfg, err := config.LoadConfig("config/config.json")
 	if err != nil {
@@ -45,9 +42,9 @@ func main() {
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
+		log.Fatalf("db ping: %v", err)
 	}
-	log.Println("✓ Connected to database")
+	log.Println("db connected")
 
 	// Connect to RabbitMQ with DLQ configuration
 	rmq, err := messaging.NewRabbitMQ(
@@ -60,12 +57,11 @@ func main() {
 		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
 	defer rmq.Close()
-	log.Println("✓ Connected to RabbitMQ (with DLQ configuration)")
+	log.Println("rabbitmq connected")
 
 	// Initialize SSE Hub
 	sseHub := messaging.NewSSEHub()
 	go sseHub.Run()
-	log.Println("✓ SSE Hub started")
 
 	// Initialize repository
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -73,10 +69,6 @@ func main() {
 	// Start notification consumer with retry logic
 	consumer := messaging.NewNotificationConsumer(rmq, notificationRepo, sseHub)
 	consumer.Start()
-	log.Println("✓ Message consumers started (3 queues)")
-	log.Println("  - queue.status_updates")
-	log.Println("  - queue.report_created")
-	log.Println("  - queue.vote_received")
 
 	// Initialize service
 	notificationService := service.NewNotificationService(notificationRepo, sseHub)

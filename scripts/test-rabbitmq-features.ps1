@@ -257,25 +257,16 @@ Write-Section "TEST SUMMARY"
 
 Write-Host @"
 
-Features Tested:
-  ✓ Service health checks (report-service, notification-service)
-  ✓ Outbox pattern (message saved to DB before publish)
-  ✓ Report creation triggers queue.report_created
-  ✓ Status update triggers queue.status_updates
-  ✓ Vote triggers queue.vote_received
-  ✓ Dead Letter Queues configured for failed messages
-  ✓ Notification service consuming from queues
+Tested:
+- Service health
+- Outbox pattern
+- Queue triggers (report, status, vote)
+- DLQ config
+- Consumer
 
-Architecture:
-  report-service (publisher) → RabbitMQ → notification-service (consumer)
-                    ↓
-              outbox_messages (transactional)
-
-Note: DLQs having 0 consumers is NORMAL - they are parking lots for failed messages.
+DLQs with 0 consumers is expected.
 
 "@ -ForegroundColor Cyan
 
-Write-Host "Test completed at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" -ForegroundColor Gray
-
-# Explicit success exit
+Write-Host "Done at $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Gray
 exit 0
