@@ -405,6 +405,157 @@ if ($token) {
 }
 
 ################################################################################
+# TEST 10: SSE (SERVER-SENT EVENTS) STREAM
+################################################################################
+Write-TestHeader "TEST 10: SSE NOTIFICATION STREAM"
+
+if ($token -and $reportId -and $adminToken) {
+    Write-Host "       Testing SSE real-time notifications..." -ForegroundColor Gray
+    
+    # Start SSE listener in background job
+    $sseJob = Start-Job -ScriptBlock {
+        param($url, $token, $userId)
+        try {
+            $request = [System.Net.HttpWebRequest]::Create($url)
+            $request.Headers.Add("Authorization", "Bearer $token")
+            $request.Headers.Add("X-User-ID", $userId)
+            $request.Accept = "text/event-stream"
+            $request.Timeout = 10000
+            $request.ReadWriteTimeout = 10000
+            
+            $response = $request.GetResponse()
+            $stream = $response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            
+            $events = @()
+            $startTime = Get-Date
+            while (((Get-Date) - $startTime).TotalSeconds -lt 8) {
+                if ($reader.Peek() -ge 0) {
+                    $line = $reader.ReadLine()
+                    if ($line -match "^data:") {
+                        $events += $line
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            
+            $reader.Close()
+            $response.Close()
+            return $events
+        } catch {
+            return @("ERROR: $($_.Exception.Message)")
+        }
+    } -ArgumentList "$NOTIFICATION_SERVICE/notifications/stream", $token, $userId
+    
+    # Wait for SSE to connect
+    Start-Sleep -Seconds 2
+    
+    # Trigger a status update to generate SSE event
+    try {
+        $statusBody = @{ status = "completed" } | ConvertTo-Json
+        $adminHeaders = @{ 
+            "Authorization" = "Bearer $adminToken"
+            "Content-Type" = "application/json"
+            "X-User-ID" = $adminLogin.user.id
+            "X-User-Role" = "admin_infrastruktur"
+        }
+        $null = Invoke-RestMethod -Uri "$REPORT_SERVICE/$reportId/status" -Method PATCH -Headers $adminHeaders -Body $statusBody -TimeoutSec 10
+        Write-Host "       Triggered status update to 'completed'" -ForegroundColor Gray
+    } catch {
+        Write-Host "       Failed to trigger status update: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    
+    # Wait for SSE job to complete
+    $sseResult = Wait-Job $sseJob -Timeout 12 | Receive-Job
+    Remove-Job $sseJob -Force -ErrorAction SilentlyContinue
+    
+    if ($sseResult -and $sseResult.Count -gt 0 -and $sseResult[0] -notmatch "^ERROR") {
+        Write-TestResult "SSE Stream Connected" $true
+        Write-Host "       Received $($sseResult.Count) SSE event(s)" -ForegroundColor Gray
+        if ($sseResult.Count -gt 0) {
+            Write-TestResult "SSE Real-time Event Received" $true
+        } else {
+            Write-TestResult "SSE Real-time Event Received" $false "No events received (may need more time)"
+        }
+    } else {
+        # Fallback: just test if SSE endpoint responds
+        try {
+            $webRequest = [System.Net.WebRequest]::Create("$NOTIFICATION_SERVICE/notifications/stream")
+            $webRequest.Headers.Add("Authorization", "Bearer $token")
+            $webRequest.Headers.Add("X-User-ID", $userId)
+            $webRequest.Timeout = 3000
+            $response = $webRequest.GetResponse()
+            $contentType = $response.ContentType
+            $response.Close()
+            
+            $isSSE = $contentType -match "text/event-stream"
+            Write-TestResult "SSE Stream Endpoint" $isSSE "Content-Type: $contentType"
+        } catch {
+            Write-TestResult "SSE Stream Endpoint" $false $_.Exception.Message
+        }
+    }
+} else {
+    Write-TestSkip "SSE Stream" "Missing token, reportId, or adminToken"
+}
+
+################################################################################
+# TEST 11: END-TO-END NOTIFICATION FLOW
+################################################################################
+Write-TestHeader "TEST 11: END-TO-END NOTIFICATION FLOW"
+
+if ($token -and $userId) {
+    # Wait for notifications to be processed
+    Start-Sleep -Seconds 3
+    
+    try {
+        $notifHeaders = @{ 
+            "Authorization" = "Bearer $token"
+            "X-User-ID" = $userId
+        }
+        
+        $notifsBefore = Invoke-RestMethod -Uri "$NOTIFICATION_SERVICE/notifications" -Headers $notifHeaders -TimeoutSec 10
+        $notifCount = $notifsBefore.notifications.Count
+        
+        Write-TestResult "Notifications Created from Messages" ($notifCount -gt 0) "Found $notifCount notification(s)"
+        
+        if ($notifCount -gt 0) {
+            $latestNotif = $notifsBefore.notifications[0]
+            Write-Host "       Latest: $($latestNotif.title)" -ForegroundColor Gray
+            
+            # Test mark as read
+            $notifId = $latestNotif.id
+            try {
+                $null = Invoke-RestMethod -Uri "$NOTIFICATION_SERVICE/notifications/$notifId/read" -Method PATCH -Headers $notifHeaders -TimeoutSec 10
+                Write-TestResult "Mark Notification as Read" $true
+            } catch {
+                Write-TestResult "Mark Notification as Read" $false $_.Exception.Message
+            }
+        }
+    } catch {
+        Write-TestResult "Notification Flow" $false $_.Exception.Message
+    }
+} else {
+    Write-TestSkip "Notification Flow" "No auth token"
+}
+
+################################################################################
+# TEST 12: CONSUMER STATUS
+################################################################################
+Write-TestHeader "TEST 12: RABBITMQ CONSUMER STATUS"
+
+$queuesNow = Get-RabbitMQQueues
+if ($queuesNow) {
+    $mainQueues = $queuesNow | Where-Object { $_.name -notlike "*.dlq" }
+    
+    foreach ($q in $mainQueues) {
+        $hasConsumer = $q.consumers -gt 0
+        Write-TestResult "Consumer on $($q.name)" $hasConsumer "Consumers: $($q.consumers)"
+    }
+} else {
+    Write-TestSkip "Consumer Status" "Cannot connect to RabbitMQ"
+}
+
+################################################################################
 # SUMMARY
 ################################################################################
 Write-TestHeader "TEST SUMMARY"

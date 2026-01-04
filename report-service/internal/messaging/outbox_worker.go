@@ -75,7 +75,7 @@ func (w *OutboxWorker) processPendingMessages() {
 	}
 
 	for _, msg := range messages {
-		if err := w.publishWithConfirm(msg.RoutingKey, msg.Payload); err != nil {
+		if err := w.publishMessage(msg.ID.String(), msg.RoutingKey, msg.Payload); err != nil {
 			log.Printf("outbox: publish %s: %v", msg.ID, err)
 			w.outboxRepo.MarkAsFailed(msg.ID, err.Error())
 			continue
@@ -87,8 +87,8 @@ func (w *OutboxWorker) processPendingMessages() {
 	}
 }
 
-// publishWithConfirm publishes a message (simple version without per-message confirms)
-func (w *OutboxWorker) publishWithConfirm(routingKey string, payload json.RawMessage) error {
+// publishMessage publishes a message with unique ID for idempotency
+func (w *OutboxWorker) publishMessage(messageID, routingKey string, payload json.RawMessage) error {
 	w.rmq.mu.RLock()
 	defer w.rmq.mu.RUnlock()
 
@@ -108,6 +108,7 @@ func (w *OutboxWorker) publishWithConfirm(routingKey string, payload json.RawMes
 		amqp.Publishing{
 			ContentType:  "application/json",
 			DeliveryMode: amqp.Persistent,
+			MessageId:    messageID,
 			Body:         payload,
 			Timestamp:    time.Now(),
 		},

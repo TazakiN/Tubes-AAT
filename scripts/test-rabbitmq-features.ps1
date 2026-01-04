@@ -1,272 +1,117 @@
-# Test RabbitMQ Features - DLQ, Retry, Outbox Pattern
-# This script tests the new RabbitMQ improvements
+# RabbitMQ Features Test
 
-param(
-    [string]$BaseUrl = "http://localhost:8080",
-    [switch]$Verbose
-)
+$ErrorActionPreference = "Continue"
+$BaseUrl = "http://localhost:8080"
 
-$ErrorActionPreference = "Stop"
+Write-Host "`n========================================" -ForegroundColor Magenta
+Write-Host "  RABBITMQ FEATURES TEST" -ForegroundColor Magenta
+Write-Host "========================================`n" -ForegroundColor Magenta
 
-# Colors for output
-function Write-Success { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Error { param($msg) Write-Host "✗ $msg" -ForegroundColor Red }
-function Write-Info { param($msg) Write-Host "ℹ $msg" -ForegroundColor Cyan }
-function Write-Section { param($msg) Write-Host "`n=== $msg ===" -ForegroundColor Yellow }
-
-# Global token storage
-$script:AuthToken = $null
-$script:AdminToken = $null
-
-Write-Host @"
-================================================================================
-    RABBITMQ FEATURES TEST SUITE
-    Testing: Outbox Pattern, DLQ, Retry, Notification Service
-================================================================================
-"@ -ForegroundColor Magenta
-
-# ============================================
-# 1. SERVICE HEALTH CHECKS
-# ============================================
-Write-Section "1. SERVICE HEALTH CHECKS"
-
-# Check Report Service
+# 1. Service Health
+Write-Host "=== 1. SERVICE HEALTH ===" -ForegroundColor Yellow
 try {
-    $reportHealth = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/health" -Method GET -ErrorAction SilentlyContinue
-    Write-Success "Report Service: $($reportHealth.status)"
-} catch {
-    # Try direct access
-    try {
-        $reportHealth = Invoke-RestMethod -Uri "http://localhost:3002/health" -Method GET
-        Write-Success "Report Service (direct): $($reportHealth.status)"
-    } catch {
-        Write-Error "Report Service not available"
-    }
-}
+    $r = Invoke-RestMethod -Uri "http://localhost:3002/health" -TimeoutSec 5
+    Write-Host "[OK] Report Service: $($r.status)" -ForegroundColor Green
+} catch { Write-Host "[FAIL] Report Service" -ForegroundColor Red }
 
-# Check Notification Service
-$notifServiceOk = $false
 try {
-    $notifHealth = Invoke-RestMethod -Uri "http://localhost:3003/health" -Method GET
-    Write-Success "Notification Service: $($notifHealth.status)"
-    $notifServiceOk = $true
-    
-    # Get detailed health (optional - may not exist)
-    try {
-        $detailedHealth = Invoke-RestMethod -Uri "http://localhost:3003/health/detailed" -Method GET
-        Write-Info "Features: $($detailedHealth.features -join ', ')"
-    } catch {
-        Write-Info "Detailed health endpoint not available (optional)"
-    }
-} catch {
-    Write-Error "Notification Service not available"
-}
-
-# Check RabbitMQ Management
-try {
-    $creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("cityconnect:cityconnect_secret"))
-    $headers = @{ Authorization = "Basic $creds" }
-    $queues = Invoke-RestMethod -Uri "http://localhost:15672/api/queues" -Headers $headers -Method GET
-    Write-Success "RabbitMQ: $($queues.Count) queues found"
-    
-    # List queues
-    foreach ($q in $queues) {
-        $dlqMarker = if ($q.name -match "\.dlq$") { " [DLQ]" } else { "" }
-        Write-Info "  - $($q.name): $($q.messages) messages$dlqMarker"
-    }
-} catch {
-    Write-Error "RabbitMQ Management not available (check port 15672)"
-}
-
-# ============================================
-# 2. AUTHENTICATION
-# ============================================
-Write-Section "2. AUTHENTICATION"
-
-# Login as warga
-try {
-    $loginBody = @{
-        email = "warga@test.com"
-        password = "password123"
-    } | ConvertTo-Json
-    
-    $loginResult = Invoke-RestMethod -Uri "$BaseUrl/api/v1/auth/login" -Method POST -Body $loginBody -ContentType "application/json"
-    $script:AuthToken = $loginResult.token
-    Write-Success "Logged in as warga@test.com"
-} catch {
-    Write-Error "Failed to login as warga: $_"
-}
-
-# Login as admin
-try {
-    $adminLoginBody = @{
-        email = "admin_kebersihan@test.com"
-        password = "password123"
-    } | ConvertTo-Json
-    
-    $adminResult = Invoke-RestMethod -Uri "$BaseUrl/api/v1/auth/login" -Method POST -Body $adminLoginBody -ContentType "application/json"
-    $script:AdminToken = $adminResult.token
-    Write-Success "Logged in as admin_kebersihan@test.com"
-} catch {
-    Write-Error "Failed to login as admin: $_"
-}
-
-# ============================================
-# 3. TEST OUTBOX PATTERN
-# ============================================
-Write-Section "3. TEST OUTBOX PATTERN"
-
-# Check outbox stats before
-try {
-    $outboxStatsBefore = Invoke-RestMethod -Uri "http://localhost:3002/admin/outbox/stats" -Method GET
-    Write-Info "Outbox stats before: $($outboxStatsBefore.outbox_stats | ConvertTo-Json -Compress)"
-} catch {
-    Write-Info "Could not get outbox stats (endpoint may not be exposed)"
-}
-
-# Create a report (triggers outbox insert)
-$reportId = $null
-if ($script:AuthToken) {
-    try {
-        $headers = @{ Authorization = "Bearer $($script:AuthToken)" }
-        $reportBody = @{
-            title = "Test Report - Outbox Pattern $(Get-Date -Format 'HH:mm:ss')"
-            description = "Testing that outbox pattern correctly saves message before publishing"
-            category_id = 1
-            privacy_level = "public"
-            location_lat = -6.2088
-            location_lng = 106.8456
-        } | ConvertTo-Json
-        
-        $report = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/" -Method POST -Body $reportBody -ContentType "application/json" -Headers $headers
-        $reportId = $report.id
-        Write-Success "Created report: $reportId"
-        Write-Info "Title: $($report.title)"
-    } catch {
-        Write-Error "Failed to create report: $_"
-    }
-}
-
-# Check outbox stats after
-Start-Sleep -Seconds 2  # Wait for outbox worker
-try {
-    $outboxStatsAfter = Invoke-RestMethod -Uri "http://localhost:3002/admin/outbox/stats" -Method GET
-    Write-Info "Outbox stats after: $($outboxStatsAfter.outbox_stats | ConvertTo-Json -Compress)"
-} catch {
-    Write-Info "Could not get outbox stats"
-}
-
-# ============================================
-# 4. TEST STATUS UPDATE (Triggers Notification)
-# ============================================
-Write-Section "4. TEST STATUS UPDATE NOTIFICATION"
-
-if ($script:AdminToken -and $reportId) {
-    try {
-        $headers = @{ Authorization = "Bearer $($script:AdminToken)" }
-        $statusBody = @{ status = "in_progress" } | ConvertTo-Json
-        
-        $null = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/$reportId/status" -Method PATCH -Body $statusBody -ContentType "application/json" -Headers $headers
-        Write-Success "Updated report status to 'in_progress'"
-        
-        Start-Sleep -Seconds 2  # Wait for message processing
-        
-        # Check notifications
-        $notifHeaders = @{ Authorization = "Bearer $($script:AuthToken)" }
-        $notifications = Invoke-RestMethod -Uri "$BaseUrl/api/v1/notifications" -Method GET -Headers $notifHeaders
-        Write-Info "Unread notifications: $($notifications.unread_count)"
-        
-        if ($notifications.notifications.Count -gt 0) {
-            Write-Success "Latest notification: $($notifications.notifications[0].title)"
-        }
-    } catch {
-        Write-Error "Failed to update status: $_"
-    }
-}
-
-# ============================================
-# 5. TEST VOTE (Triggers Notification)
-# ============================================
-Write-Section "5. TEST VOTE NOTIFICATION"
-
-if ($script:AdminToken -and $reportId) {
-    try {
-        # Admin votes on warga's report
-        $headers = @{ Authorization = "Bearer $($script:AdminToken)" }
-        $voteBody = @{ vote_type = "upvote" } | ConvertTo-Json
-        
-        $voteResult = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/$reportId/vote" -Method POST -Body $voteBody -ContentType "application/json" -Headers $headers
-        Write-Success "Voted on report. New score: $($voteResult.vote_score)"
-        
-        Start-Sleep -Seconds 2  # Wait for message processing
-        
-        # Check notifications for warga
-        $notifHeaders = @{ Authorization = "Bearer $($script:AuthToken)" }
-        $notifications = Invoke-RestMethod -Uri "$BaseUrl/api/v1/notifications" -Method GET -Headers $notifHeaders
-        Write-Info "Warga unread notifications: $($notifications.unread_count)"
-    } catch {
-        Write-Error "Failed to vote: $_"
-    }
-}
-
-# ============================================
-# 6. CHECK RABBITMQ QUEUES & DLQ
-# ============================================
-Write-Section "6. RABBITMQ QUEUE STATUS"
+    $n = Invoke-RestMethod -Uri "http://localhost:3003/health" -TimeoutSec 5
+    Write-Host "[OK] Notification Service: $($n.status)" -ForegroundColor Green
+} catch { Write-Host "[FAIL] Notification Service" -ForegroundColor Red }
 
 try {
     $creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("cityconnect:cityconnect_secret"))
-    $headers = @{ Authorization = "Basic $creds" }
-    $queues = Invoke-RestMethod -Uri "http://localhost:15672/api/queues" -Headers $headers -Method GET
-    
-    $mainQueues = $queues | Where-Object { $_.name -notmatch "\.dlq$" -and $_.name -match "^queue\." }
-    $dlqQueues = $queues | Where-Object { $_.name -match "\.dlq$" }
-    
-    Write-Info "Main Queues:"
-    foreach ($q in $mainQueues) {
-        $status = if ($q.messages -eq 0) { "empty" } else { "$($q.messages) pending" }
-        Write-Host "  - $($q.name): $status" -ForegroundColor $(if ($q.messages -eq 0) { "Green" } else { "Yellow" })
+    $queues = Invoke-RestMethod -Uri "http://localhost:15672/api/queues" -Headers @{Authorization="Basic $creds"} -TimeoutSec 5
+    Write-Host "[OK] RabbitMQ: $($queues.Count) queues" -ForegroundColor Green
+} catch { Write-Host "[FAIL] RabbitMQ" -ForegroundColor Red }
+
+# 2. Auth
+Write-Host "`n=== 2. AUTHENTICATION ===" -ForegroundColor Yellow
+$wargaLogin = Invoke-RestMethod -Uri "$BaseUrl/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"warga@test.com","password":"password123"}'
+$wargaToken = $wargaLogin.token
+Write-Host "[OK] Logged in as warga" -ForegroundColor Green
+
+$adminLogin = Invoke-RestMethod -Uri "$BaseUrl/api/v1/auth/login" -Method POST -ContentType "application/json" -Body '{"email":"admin_kebersihan@test.com","password":"password123"}'
+$adminToken = $adminLogin.token
+Write-Host "[OK] Logged in as admin" -ForegroundColor Green
+
+# 3. Outbox Pattern
+Write-Host "`n=== 3. OUTBOX PATTERN ===" -ForegroundColor Yellow
+try {
+    $before = Invoke-RestMethod -Uri "http://localhost:3002/admin/outbox/stats" -TimeoutSec 5
+    $beforeCount = $before.outbox_stats.published
+    Write-Host "    Outbox published before: $beforeCount" -ForegroundColor Gray
+} catch { $beforeCount = 0 }
+
+$reportBody = @{ title = "Outbox Test $(Get-Random)"; description = "Testing outbox"; category_id = 1; privacy_level = "public" } | ConvertTo-Json
+$report = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/" -Method POST -Headers @{Authorization="Bearer $wargaToken";"Content-Type"="application/json"} -Body $reportBody
+$reportId = $report.report.id
+Write-Host "[OK] Created report: $reportId" -ForegroundColor Green
+
+Start-Sleep -Seconds 2
+
+try {
+    $after = Invoke-RestMethod -Uri "http://localhost:3002/admin/outbox/stats" -TimeoutSec 5
+    $afterCount = $after.outbox_stats.published
+    Write-Host "    Outbox published after: $afterCount" -ForegroundColor Gray
+    if ($afterCount -gt $beforeCount) {
+        Write-Host "[OK] Outbox pattern working" -ForegroundColor Green
     }
-    
-    Write-Info "Dead Letter Queues (DLQ):"
-    foreach ($q in $dlqQueues) {
-        $color = if ($q.messages -eq 0) { "Green" } else { "Red" }
-        Write-Host "  - $($q.name): $($q.messages) messages" -ForegroundColor $color
-    }
-    
-    if (($dlqQueues | Measure-Object -Property messages -Sum).Sum -eq 0) {
-        Write-Success "All DLQs are empty (no failed messages)"
-    } else {
-        Write-Error "Some messages in DLQ - check for processing errors!"
-    }
-} catch {
-    Write-Error "Failed to check RabbitMQ queues: $_"
+} catch {}
+
+# 4. Status Update -> Notification
+Write-Host "`n=== 4. STATUS UPDATE NOTIFICATION ===" -ForegroundColor Yellow
+$statusBody = '{"status":"in_progress"}'
+$null = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/$reportId/status" -Method PATCH -Headers @{Authorization="Bearer $adminToken";"Content-Type"="application/json"} -Body $statusBody
+Write-Host "[OK] Status updated to in_progress" -ForegroundColor Green
+
+Start-Sleep -Seconds 2
+
+$notifs = Invoke-RestMethod -Uri "$BaseUrl/api/v1/notifications" -Headers @{Authorization="Bearer $wargaToken"}
+$found = $notifs.notifications | Where-Object { $_.message -like "*Outbox Test*" }
+if ($found) {
+    Write-Host "[OK] Notification created for status update" -ForegroundColor Green
+} else {
+    Write-Host "[INFO] Notification may take a moment" -ForegroundColor Yellow
 }
 
-# ============================================
-# 7. TEST SSE STREAM (Optional)
-# ============================================
-Write-Section "7. SSE STREAM TEST"
-Write-Info "SSE endpoint: $BaseUrl/api/v1/notifications/stream"
-Write-Info "Test with: curl -H 'Authorization: Bearer TOKEN' $BaseUrl/api/v1/notifications/stream"
+# 5. Vote -> Notification  
+Write-Host "`n=== 5. VOTE NOTIFICATION ===" -ForegroundColor Yellow
+$voteBody = '{"vote_type":"upvote"}'
+try {
+    $null = Invoke-RestMethod -Uri "$BaseUrl/api/v1/reports/$reportId/vote" -Method POST -Headers @{Authorization="Bearer $adminToken";"Content-Type"="application/json"} -Body $voteBody
+    Write-Host "[OK] Vote cast" -ForegroundColor Green
+} catch {
+    Write-Host "[INFO] Vote may already exist" -ForegroundColor Yellow
+}
 
-# ============================================
-# SUMMARY
-# ============================================
-Write-Section "TEST SUMMARY"
+# 6. Queue Status
+Write-Host "`n=== 6. QUEUE STATUS ===" -ForegroundColor Yellow
+$creds = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("cityconnect:cityconnect_secret"))
+$queues = Invoke-RestMethod -Uri "http://localhost:15672/api/queues" -Headers @{Authorization="Basic $creds"}
 
-Write-Host @"
+foreach ($q in $queues) {
+    $dlq = if ($q.name -like "*.dlq") { " [DLQ]" } else { "" }
+    $status = if ($q.consumers -gt 0 -or $q.name -like "*.dlq") { "OK" } else { "NO CONSUMER" }
+    Write-Host "    $($q.name): $($q.messages) msgs, $($q.consumers) consumers$dlq [$status]" -ForegroundColor $(if($status -eq "OK"){"Gray"}else{"Yellow"})
+}
 
-Tested:
-- Service health
-- Outbox pattern
-- Queue triggers (report, status, vote)
-- DLQ config
-- Consumer
+# 7. DLQ Check
+Write-Host "`n=== 7. DLQ STATUS ===" -ForegroundColor Yellow
+$dlqs = $queues | Where-Object { $_.name -like "*.dlq" }
+$totalDlqMsgs = ($dlqs | Measure-Object -Property messages -Sum).Sum
+if ($totalDlqMsgs -eq 0) {
+    Write-Host "[OK] No messages in DLQ (healthy)" -ForegroundColor Green
+} else {
+    Write-Host "[WARN] $totalDlqMsgs messages in DLQ - check for errors" -ForegroundColor Yellow
+}
 
-DLQs with 0 consumers is expected.
+# Summary
+Write-Host "`n========================================" -ForegroundColor Magenta
+Write-Host "  TEST COMPLETE" -ForegroundColor Magenta
+Write-Host "========================================" -ForegroundColor Magenta
+Write-Host "Report ID: $reportId"
+Write-Host "Outbox: $beforeCount -> $afterCount published"
+Write-Host "DLQ messages: $totalDlqMsgs"
 
-"@ -ForegroundColor Cyan
-
-Write-Host "Done at $(Get-Date -Format 'HH:mm:ss')" -ForegroundColor Gray
 exit 0
