@@ -60,7 +60,6 @@ export function useServiceWorker(): ServiceWorkerHook {
         return;
       }
 
-      // Only send if document is hidden (user not focused on tab)
       if (document.visibilityState === "hidden") {
         swRegistration.current.active.postMessage({
           type: "SHOW_NOTIFICATION",

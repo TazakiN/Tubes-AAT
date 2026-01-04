@@ -72,7 +72,6 @@ func (h *SSEHub) Run() {
 				select {
 				case client.Channel <- notification:
 				default:
-					// channel full, skip
 				}
 			}
 			h.mu.RUnlock()
@@ -97,7 +96,6 @@ func (h *SSEHub) SendToUser(notification *model.Notification) {
 	h.broadcast <- notification
 }
 
-// NotificationConsumer consumes messages from RabbitMQ queues
 type NotificationConsumer struct {
 	rmq              *RabbitMQ
 	notificationRepo *repository.NotificationRepository
@@ -160,7 +158,6 @@ func (c *NotificationConsumer) processQueue(queueName string, msgs <-chan amqp.D
 	}
 }
 
-// processMessageWithRetry handles retry with backoff
 func (c *NotificationConsumer) processMessageWithRetry(queueName string, msg amqp.Delivery, handler func(amqp.Delivery) error) {
 	messageID := msg.MessageId
 	if messageID == "" {
@@ -225,7 +222,6 @@ func (c *NotificationConsumer) handleStatusUpdate(msg amqp.Delivery) error {
 		return err
 	}
 
-	// Send SSE notification
 	if statusUpdate.ReporterID != "" {
 		reporterID, err := uuid.Parse(statusUpdate.ReporterID)
 		if err == nil {
@@ -253,7 +249,6 @@ func (c *NotificationConsumer) handleReportCreated(msg amqp.Delivery) error {
 	}
 
 	log.Printf("report_created: %s by %s", reportCreated.ReportID, reportCreated.ReporterName)
-	// TODO: notify admins
 	return nil
 }
 
@@ -270,7 +265,6 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) error {
 		return nil
 	}
 
-	// skip if voter is reporter
 	if voteReceived.ReporterID != "" && voteReceived.ReporterID != voteReceived.VoterID {
 		reporterID, err := uuid.Parse(voteReceived.ReporterID)
 		if err == nil {
@@ -293,7 +287,6 @@ func (c *NotificationConsumer) handleVoteReceived(msg amqp.Delivery) error {
 				return err
 			}
 
-			// Send SSE notification
 			c.sseHub.SendToUser(notification)
 		}
 	}

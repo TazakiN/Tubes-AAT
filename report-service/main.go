@@ -26,7 +26,6 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Connect to database
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.Database.Host,
 		cfg.Database.Port,
@@ -46,7 +45,6 @@ func main() {
 	}
 	log.Println("db connected")
 
-	// Connect to RabbitMQ
 	rmq, err := messaging.NewRabbitMQ(
 		cfg.RabbitMQ.Host,
 		cfg.RabbitMQ.Port,
@@ -59,35 +57,27 @@ func main() {
 	defer rmq.Close()
 	log.Println("rabbitmq connected")
 
-	// Initialize repositories
 	reportRepo := repository.NewReportRepository(db)
 	voteRepo := repository.NewVoteRepository(db)
 	outboxRepo := repository.NewOutboxRepository(db)
 
-	// Start outbox worker (replaces direct async publishing)
 	outboxWorker := messaging.NewOutboxWorker(outboxRepo, rmq)
 	outboxWorker.Start()
 
-	// Initialize services with outbox pattern
 	reportService := service.NewReportService(reportRepo, outboxRepo, cfg.Anonymous, rmq, db)
 	voteService := service.NewVoteService(voteRepo, reportRepo, outboxRepo, rmq)
 
-	// Initialize handlers
 	reportHandler := handler.NewReportHandler(reportService)
 	voteHandler := handler.NewVoteHandler(voteService)
 
-	// Setup Gin router
 	r := gin.Default()
 
-	// Health check
 	r.GET("/health", reportHandler.Health)
 
-	// Public endpoints
 	r.GET("/public", reportHandler.GetPublicReports)
 	r.GET("/categories", reportHandler.GetCategories)
 	r.POST("/categories", reportHandler.CreateCategory)
 
-	// Report routes (auth required)
 	r.POST("/", reportHandler.CreateReport)
 	r.GET("/", reportHandler.GetReports)
 	r.GET("/my", reportHandler.GetMyReports)
@@ -95,12 +85,10 @@ func main() {
 	r.PUT("/:id", reportHandler.UpdateReport)
 	r.PATCH("/:id/status", reportHandler.UpdateStatus)
 
-	// Vote routes (auth required)
 	r.POST("/:id/vote", voteHandler.CastVote)
 	r.DELETE("/:id/vote", voteHandler.RemoveVote)
 	r.GET("/:id/vote", voteHandler.GetVote)
 
-	// Admin/monitoring routes
 	r.GET("/admin/outbox/stats", func(c *gin.Context) {
 		stats, err := outboxWorker.GetStats()
 		if err != nil {
@@ -110,7 +98,6 @@ func main() {
 		c.JSON(200, gin.H{"outbox_stats": stats})
 	})
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

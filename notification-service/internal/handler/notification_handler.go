@@ -42,10 +42,8 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 }
 
 func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
-	// Try header first (for nginx-authenticated requests)
 	userID := c.GetHeader("X-User-ID")
 
-	// If no header, validate token from query param (for EventSource)
 	if userID == "" {
 		token := c.Query("token")
 		if token == "" {
@@ -67,21 +65,16 @@ func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
 		return
 	}
 
-	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no") // Disable nginx buffering
-
-	// Register SSE client
+	c.Header("X-Accel-Buffering", "no")
 	client := h.notificationService.RegisterClient(uid)
 	defer h.notificationService.UnregisterClient(client)
 
-	// Send initial connection event
 	c.SSEvent("connected", gin.H{"status": "connected", "user_id": userID})
 	c.Writer.Flush()
 
-	// Listen for notifications
 	clientGone := c.Request.Context().Done()
 	for {
 		select {
@@ -161,7 +154,6 @@ func (h *NotificationHandler) Health(c *gin.Context) {
 	})
 }
 
-// HealthCheck returns detailed health status
 func (h *NotificationHandler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "ok",
@@ -170,7 +162,6 @@ func (h *NotificationHandler) HealthCheck(c *gin.Context) {
 	})
 }
 
-// GetDLQStats returns DLQ stats (stub)
 func (h *NotificationHandler) GetDLQStats(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"note": "query RabbitMQ management API directly",

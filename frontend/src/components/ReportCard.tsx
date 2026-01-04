@@ -27,12 +27,10 @@ export default function ReportCard({
     setIsVoting(true);
     try {
       if (userVote === voteType) {
-        // Remove vote
         const response = await api.removeVote(report.id);
         setVoteScore(response.vote_score);
         setUserVote(null);
       } else {
-        // Cast vote
         const response = await api.castVote(report.id, { vote_type: voteType });
         setVoteScore(response.vote_score);
         setUserVote(response.user_vote_type || null);

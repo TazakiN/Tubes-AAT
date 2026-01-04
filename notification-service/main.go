@@ -26,7 +26,6 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Connect to database
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		cfg.Database.Host,
 		cfg.Database.Port,
@@ -46,7 +45,6 @@ func main() {
 	}
 	log.Println("db connected")
 
-	// Connect to RabbitMQ with DLQ configuration
 	rmq, err := messaging.NewRabbitMQ(
 		cfg.RabbitMQ.Host,
 		cfg.RabbitMQ.Port,
@@ -59,31 +57,23 @@ func main() {
 	defer rmq.Close()
 	log.Println("rabbitmq connected")
 
-	// Initialize SSE Hub
 	sseHub := messaging.NewSSEHub()
 	go sseHub.Run()
 
-	// Initialize repository
 	notificationRepo := repository.NewNotificationRepository(db)
 
-	// Start notification consumer with retry logic
 	consumer := messaging.NewNotificationConsumer(rmq, notificationRepo, sseHub)
 	consumer.Start()
 
-	// Initialize service
 	notificationService := service.NewNotificationService(notificationRepo, sseHub)
 
-	// Initialize handler
 	notificationHandler := handler.NewNotificationHandler(notificationService, cfg.JWT.Secret)
 
-	// Setup Gin router
 	r := gin.Default()
 
-	// Health check
 	r.GET("/health", notificationHandler.Health)
 	r.GET("/health/detailed", notificationHandler.HealthCheck)
 
-	// Notification routes
 	notifications := r.Group("/notifications")
 	{
 		notifications.GET("", notificationHandler.GetNotifications)
@@ -92,13 +82,11 @@ func main() {
 		notifications.PATCH("/read-all", notificationHandler.MarkAllAsRead)
 	}
 
-	// Admin/monitoring routes
 	admin := r.Group("/admin")
 	{
 		admin.GET("/dlq/stats", notificationHandler.GetDLQStats)
 	}
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

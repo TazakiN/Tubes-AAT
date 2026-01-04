@@ -1,5 +1,3 @@
-// API client for CityConnect backend
-
 import type {
   LoginRequest,
   LoginResponse,
@@ -198,7 +196,7 @@ class ApiClient {
     });
   }
 
-  // SSE stream URL - takes token parameter for external use
+  // SSE
   getNotificationStreamUrl(token: string): string {
     return `${this.baseUrl}/api/v1/notifications/stream?token=${token}`;
   }

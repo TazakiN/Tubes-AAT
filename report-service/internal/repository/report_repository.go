@@ -102,13 +102,10 @@ func (r *ReportRepository) FindByID(id uuid.UUID) (*model.Report, error) {
 	return report, nil
 }
 
-// Returns reports filtered by department (for admin) or all public reports (for warga).
 func (r *ReportRepository) FindAll(userRole string, department *string) ([]model.Report, error) {
 	var query string
 	var args []interface{}
 
-	// Warga can see: their own reports + public reports
-	// Admin Dinas X can see: reports in category belonging to their department
 	if userRole == "warga" {
 		query = `
 			SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
@@ -120,7 +117,6 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 			ORDER BY r.created_at DESC
 		`
 	} else if department != nil {
-		// Admin hanya bisa lihat laporan di departemennya
 		query = `
 			SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
 				r.photo_url, r.privacy_level, r.reporter_id, r.status, r.vote_score, r.created_at, r.updated_at,
@@ -190,7 +186,6 @@ func (r *ReportRepository) FindAll(userRole string, department *string) ([]model
 	return reports, nil
 }
 
-// Returns all reports created by a specific user.
 func (r *ReportRepository) FindByReporterID(reporterID uuid.UUID) ([]model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
@@ -288,7 +283,6 @@ func (r *ReportRepository) GetCategoryByID(id int) (*model.Category, error) {
 	return cat, nil
 }
 
-// Returns all public reports with vote scores, ordered by score then creation time.
 func (r *ReportRepository) GetPublicReports() ([]model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
@@ -362,9 +356,7 @@ func (r *ReportRepository) GetPublicReports() ([]model.Report, error) {
 	return reports, nil
 }
 
-// Dynamically updates title and/or description fields on a report.
 func (r *ReportRepository) Update(id uuid.UUID, title, description *string) error {
-	// Build dynamic query based on what fields are provided
 	query := `UPDATE reports SET updated_at = NOW()`
 	args := []interface{}{}
 	argIndex := 1
@@ -399,7 +391,6 @@ func (r *ReportRepository) Update(id uuid.UUID, title, description *string) erro
 	return nil
 }
 
-// Returns all categories ordered by department and name.
 func (r *ReportRepository) GetAllCategories() ([]model.Category, error) {
 	query := `SELECT id, name, department FROM categories ORDER BY department, name`
 	rows, err := r.db.Query(query)
@@ -419,7 +410,6 @@ func (r *ReportRepository) GetAllCategories() ([]model.Category, error) {
 	return categories, nil
 }
 
-// Performs full-text search on public reports with optional category filtering.
 func (r *ReportRepository) SearchPublicReports(search string, categoryID *int) ([]model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
@@ -457,7 +447,6 @@ func (r *ReportRepository) SearchPublicReports(search string, categoryID *int) (
 	return r.scanReportsWithReporterName(rows)
 }
 
-// Performs full-text search on user's own reports with optional category filtering.
 func (r *ReportRepository) SearchMyReports(reporterID uuid.UUID, search string, categoryID *int) ([]model.Report, error) {
 	query := `
 		SELECT r.id, r.title, r.description, r.category_id, r.location_lat, r.location_lng,
@@ -539,7 +528,6 @@ func (r *ReportRepository) SearchMyReports(reporterID uuid.UUID, search string, 
 	return reports, nil
 }
 
-// Helper to scan report rows that include reporter name from users table.
 func (r *ReportRepository) scanReportsWithReporterName(rows *sql.Rows) ([]model.Report, error) {
 	var reports []model.Report
 	for rows.Next() {
@@ -595,21 +583,19 @@ func (r *ReportRepository) scanReportsWithReporterName(rows *sql.Rows) ([]model.
 	return reports, nil
 }
 
-// Performs case-insensitive lookup of category by name.
 func (r *ReportRepository) FindCategoryByName(name string) (*model.Category, error) {
 	query := `SELECT id, name, department FROM categories WHERE LOWER(name) = LOWER($1)`
 	cat := &model.Category{}
 	err := r.db.QueryRow(query, name).Scan(&cat.ID, &cat.Name, &cat.Department)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // Not found
+			return nil, nil
 		}
 		return nil, err
 	}
 	return cat, nil
 }
 
-// Inserts a new category and returns it with the generated ID.
 func (r *ReportRepository) CreateCategory(name, department string) (*model.Category, error) {
 	query := `INSERT INTO categories (name, department) VALUES ($1, $2) RETURNING id`
 	var id int

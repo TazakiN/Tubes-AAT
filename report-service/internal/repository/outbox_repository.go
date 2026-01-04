@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// OutboxMessage represents a message in the outbox table
 type OutboxMessage struct {
 	ID          uuid.UUID       `json:"id"`
 	RoutingKey  string          `json:"routing_key"`
@@ -20,17 +19,14 @@ type OutboxMessage struct {
 	Status      string          `json:"status"`
 }
 
-// OutboxRepository handles outbox database operations
 type OutboxRepository struct {
 	db *sql.DB
 }
 
-// NewOutboxRepository creates a new OutboxRepository
 func NewOutboxRepository(db *sql.DB) *OutboxRepository {
 	return &OutboxRepository{db: db}
 }
 
-// CreateInTransaction inserts an outbox message within an existing transaction
 func (r *OutboxRepository) CreateInTransaction(tx *sql.Tx, routingKey string, payload interface{}) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -45,7 +41,6 @@ func (r *OutboxRepository) CreateInTransaction(tx *sql.Tx, routingKey string, pa
 	return err
 }
 
-// Create inserts an outbox message (non-transactional, for backward compatibility)
 func (r *OutboxRepository) Create(routingKey string, payload interface{}) error {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -60,7 +55,6 @@ func (r *OutboxRepository) Create(routingKey string, payload interface{}) error 
 	return err
 }
 
-// GetPendingMessages retrieves pending messages for publishing
 func (r *OutboxRepository) GetPendingMessages(limit int) ([]OutboxMessage, error) {
 	query := `
 		SELECT id, routing_key, payload, created_at, retry_count, last_error, status
@@ -101,7 +95,6 @@ func (r *OutboxRepository) GetPendingMessages(limit int) ([]OutboxMessage, error
 	return messages, nil
 }
 
-// MarkAsPublished marks a message as successfully published
 func (r *OutboxRepository) MarkAsPublished(id uuid.UUID) error {
 	query := `
 		UPDATE outbox_messages
@@ -112,7 +105,6 @@ func (r *OutboxRepository) MarkAsPublished(id uuid.UUID) error {
 	return err
 }
 
-// MarkAsFailed marks a message as failed with error details
 func (r *OutboxRepository) MarkAsFailed(id uuid.UUID, errMsg string) error {
 	query := `
 		UPDATE outbox_messages
@@ -124,7 +116,6 @@ func (r *OutboxRepository) MarkAsFailed(id uuid.UUID, errMsg string) error {
 	return err
 }
 
-// DeletePublished deletes messages that have been published (cleanup)
 func (r *OutboxRepository) DeletePublished(olderThan time.Duration) (int64, error) {
 	query := `
 		DELETE FROM outbox_messages
@@ -137,7 +128,6 @@ func (r *OutboxRepository) DeletePublished(olderThan time.Duration) (int64, erro
 	return result.RowsAffected()
 }
 
-// GetStats returns statistics about the outbox
 func (r *OutboxRepository) GetStats() (map[string]int, error) {
 	query := `
 		SELECT status, COUNT(*) as count
@@ -163,7 +153,6 @@ func (r *OutboxRepository) GetStats() (map[string]int, error) {
 	return stats, nil
 }
 
-// BeginTx starts a new database transaction
 func (r *OutboxRepository) BeginTx() (*sql.Tx, error) {
 	return r.db.Begin()
 }

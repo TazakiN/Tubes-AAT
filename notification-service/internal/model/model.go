@@ -23,7 +23,6 @@ const (
 	VoteDownvote VoteType = "downvote"
 )
 
-// Notification represents a persistent notification for a user
 type Notification struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`
@@ -34,13 +33,11 @@ type Notification struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
-// NotificationListResponse is the response for listing notifications
 type NotificationListResponse struct {
 	Notifications []Notification `json:"notifications"`
 	UnreadCount   int            `json:"unread_count"`
 }
 
-// Message types from RabbitMQ
 type StatusUpdateMessage struct {
 	ReportID    string `json:"report_id"`
 	ReportTitle string `json:"report_title"`
@@ -70,7 +67,6 @@ type VoteReceivedMessage struct {
 	Timestamp   int64  `json:"timestamp"`
 }
 
-// ProcessedMessage tracks processed message IDs for idempotency
 type ProcessedMessage struct {
 	MessageID   string    `json:"message_id"`
 	ProcessedAt time.Time `json:"processed_at"`

@@ -1,5 +1,3 @@
-// API Types matching backend models
-
 export type Role =
   | "warga"
   | "admin_kebersihan"
@@ -56,7 +54,6 @@ export interface Notification {
   created_at: string;
 }
 
-// Request DTOs
 export interface LoginRequest {
   email: string;
   password: string;
@@ -87,7 +84,6 @@ export interface VoteRequest {
   vote_type: VoteType;
 }
 
-// Response DTOs
 export interface LoginResponse {
   token: string;
   user: User;

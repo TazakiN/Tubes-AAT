@@ -19,7 +19,6 @@ const (
 	QueueReportCreated = "queue.report_created"
 	QueueVoteReceived  = "queue.vote_received"
 
-	// Dead Letter Queues
 	QueueStatusUpdatesDLQ = "queue.status_updates.dlq"
 	QueueReportCreatedDLQ = "queue.report_created.dlq"
 	QueueVoteReceivedDLQ  = "queue.vote_received.dlq"
@@ -113,52 +112,34 @@ func (r *RabbitMQ) connect() error {
 		return fmt.Errorf("channel: %w", err)
 	}
 
-	// Declare main exchange
 	err = r.channel.ExchangeDeclare(
 		ExchangeName,
 		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,
+		true, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("exchange declare: %w", err)
 	}
 
-	// Declare Dead Letter Exchange (DLX)
 	err = r.channel.ExchangeDeclare(
 		DLXExchangeName,
 		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,
+		true, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("dlx exchange declare: %w", err)
 	}
 
-	// Declare queues with DLQ configuration
 	for _, qb := range QueueBindings {
-		// Declare DLQ first
 		_, err = r.channel.QueueDeclare(
 			qb.DLQName,
-			true,  // durable
-			false, // delete when unused
-			false, // exclusive
-			false, // no-wait
-			amqp.Table{
-				"x-message-ttl": int64(86400000), // 24 hours TTL for DLQ messages
-			},
+			true, false, false, false, amqp.Table{
+				"x-message-ttl": int64(86400000)},
 		)
 		if err != nil {
 			return fmt.Errorf("dlq declare %s: %w", qb.DLQName, err)
 		}
 
-		// Bind DLQ to DLX
 		err = r.channel.QueueBind(
 			qb.DLQName,
 			qb.DLQRoutingKey,
@@ -170,14 +151,9 @@ func (r *RabbitMQ) connect() error {
 			return fmt.Errorf("dlq bind %s: %w", qb.DLQName, err)
 		}
 
-		// Declare main queue with DLX configuration
 		_, err = r.channel.QueueDeclare(
 			qb.QueueName,
-			true,  // durable
-			false, // delete when unused
-			false, // exclusive
-			false, // no-wait
-			amqp.Table{
+			true, false, false, false, amqp.Table{
 				"x-dead-letter-exchange":    DLXExchangeName,
 				"x-dead-letter-routing-key": qb.DLQRoutingKey,
 			},
@@ -186,7 +162,6 @@ func (r *RabbitMQ) connect() error {
 			return fmt.Errorf("queue declare %s: %w", qb.QueueName, err)
 		}
 
-		// Bind main queue to exchange
 		err = r.channel.QueueBind(
 			qb.QueueName,
 			qb.RoutingKey,
@@ -284,12 +259,7 @@ func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) 
 
 	msgs, err := r.channel.Consume(
 		queueName,
-		"",    // consumer tag (auto-generated)
-		false, // auto-ack
-		false, // exclusive
-		false, // no-local
-		false, // no-wait
-		nil,
+		"", false, false, false, false, nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("consume %s: %w", queueName, err)

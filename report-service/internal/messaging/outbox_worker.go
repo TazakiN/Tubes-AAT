@@ -20,7 +20,6 @@ const (
 	publishedRetention = 24 * time.Hour
 )
 
-// OutboxWorker publishes messages from outbox table to RabbitMQ
 type OutboxWorker struct {
 	outboxRepo *repository.OutboxRepository
 	rmq        *RabbitMQ
@@ -28,7 +27,6 @@ type OutboxWorker struct {
 	wg         sync.WaitGroup
 }
 
-// NewOutboxWorker creates a new OutboxWorker
 func NewOutboxWorker(outboxRepo *repository.OutboxRepository, rmq *RabbitMQ) *OutboxWorker {
 	return &OutboxWorker{
 		outboxRepo: outboxRepo,
@@ -37,7 +35,6 @@ func NewOutboxWorker(outboxRepo *repository.OutboxRepository, rmq *RabbitMQ) *Ou
 	}
 }
 
-// Start begins the outbox worker
 func (w *OutboxWorker) Start() {
 	w.wg.Add(2)
 	go w.processLoop()
@@ -45,7 +42,6 @@ func (w *OutboxWorker) Start() {
 	log.Println("outbox: started")
 }
 
-// processLoop continuously processes pending outbox messages
 func (w *OutboxWorker) processLoop() {
 	defer w.wg.Done()
 
@@ -62,7 +58,6 @@ func (w *OutboxWorker) processLoop() {
 	}
 }
 
-// processPendingMessages fetches and publishes pending messages
 func (w *OutboxWorker) processPendingMessages() {
 	messages, err := w.outboxRepo.GetPendingMessages(batchSize)
 	if err != nil {
@@ -87,7 +82,6 @@ func (w *OutboxWorker) processPendingMessages() {
 	}
 }
 
-// publishMessage publishes a message with unique ID for idempotency
 func (w *OutboxWorker) publishMessage(messageID, routingKey string, payload json.RawMessage) error {
 	w.rmq.mu.RLock()
 	defer w.rmq.mu.RUnlock()
@@ -120,7 +114,6 @@ func (w *OutboxWorker) publishMessage(messageID, routingKey string, payload json
 	return nil
 }
 
-// cleanupLoop periodically cleans up old published messages
 func (w *OutboxWorker) cleanupLoop() {
 	defer w.wg.Done()
 
@@ -148,7 +141,6 @@ func (w *OutboxWorker) Stop() {
 	log.Println("outbox: stopped")
 }
 
-// GetStats returns outbox statistics
 func (w *OutboxWorker) GetStats() (map[string]int, error) {
 	return w.outboxRepo.GetStats()
 }

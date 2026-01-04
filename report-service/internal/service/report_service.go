@@ -55,13 +55,10 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 		UpdatedAt:    time.Now(),
 	}
 
-	// Handle privacy level
 	switch req.PrivacyLevel {
 	case model.PrivacyAnonymous:
-		// Hash the user ID with salt - cannot be reversed
 		hash := s.hashUserID(userID)
 		report.ReporterHash = &hash
-		// ReporterID stays nil for anonymous
 	default:
 		report.ReporterID = &uid
 		report.ReporterName = &userName
@@ -71,7 +68,6 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 		return nil, err
 	}
 
-	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
 	if s.outboxRepo != nil {
 		reporterIDStr := ""
 		if report.ReporterID != nil {
@@ -97,7 +93,6 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 		}
 	}
 
-	// Clear hash from response
 	report.ReporterHash = nil
 
 	return report, nil
@@ -109,7 +104,6 @@ func (s *ReportService) GetReports(userRole string, department *string) (*model.
 		return nil, err
 	}
 
-	// Mask reporter info for anonymous reports
 	for i := range reports {
 		if reports[i].PrivacyLevel == model.PrivacyAnonymous {
 			reports[i].ReporterID = nil
@@ -166,14 +160,12 @@ func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID stri
 		return nil, err
 	}
 
-	// RBAC: admin hanya bisa akses laporan di departemennya
 	if userRole != "warga" && department != nil {
 		if report.Category.Department != *department {
 			return nil, fmt.Errorf("access denied")
 		}
 	}
 
-	// warga hanya bisa lihat laporan sendiri atau publik
 	if userRole == "warga" {
 		if report.PrivacyLevel != model.PrivacyPublic {
 			if report.ReporterID == nil || report.ReporterID.String() != userID {
@@ -182,7 +174,6 @@ func (s *ReportService) GetReportByID(id uuid.UUID, userRole string, userID stri
 		}
 	}
 
-	// mask anonymous reporter
 	if report.PrivacyLevel == model.PrivacyAnonymous {
 		report.ReporterID = nil
 		report.ReporterName = nil
@@ -222,7 +213,6 @@ func (s *ReportService) UpdateReportStatus(reportID uuid.UUID, status model.Repo
 		return err
 	}
 
-	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
 	if s.outboxRepo != nil {
 		msg := messaging.StatusUpdateMessage{
 			ReportID:    reportID.String(),
@@ -293,7 +283,6 @@ func (s *ReportService) GetOrCreateCategory(name, department string) (*model.Cat
 		return existing, nil
 	}
 
-	// Create new category
 	return s.reportRepo.CreateCategory(name, department)
 }
 

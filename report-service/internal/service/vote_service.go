@@ -58,7 +58,6 @@ func (s *VoteService) CastVote(reportIDStr, userIDStr string, voteType model.Vot
 		return nil, err
 	}
 
-	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
 	if s.outboxRepo != nil {
 		reporterIDStr := ""
 		if report.ReporterID != nil {

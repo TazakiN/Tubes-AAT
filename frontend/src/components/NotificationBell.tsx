@@ -26,17 +26,14 @@ export default function NotificationBell({
       requestPermission();
 
       loadNotifications();
-      // Setup SSE for real-time notifications
       const eventSource = new EventSource(
         api.getNotificationStreamUrl(token || "")
       );
 
-      // Handle 'connected' event
       eventSource.addEventListener("connected", (event) => {
         console.log("SSE connected:", event.data);
       });
 
-      // Handle 'notification' events (named events require addEventListener, not onmessage)
       eventSource.addEventListener("notification", (event) => {
         try {
           const notification = JSON.parse(event.data) as Notification;

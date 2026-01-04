@@ -35,7 +35,6 @@ func (h *ReportHandler) CreateReport(c *gin.Context) {
 		return
 	}
 
-	// Validate privacy level
 	validLevels := map[model.PrivacyLevel]bool{
 		model.PrivacyPublic:    true,
 		model.PrivacyPrivate:   true,
@@ -46,13 +45,11 @@ func (h *ReportHandler) CreateReport(c *gin.Context) {
 		return
 	}
 
-	// Handle new category creation
 	if req.NewCategoryName != nil && *req.NewCategoryName != "" {
 		if req.NewCategoryDepartment == nil || *req.NewCategoryDepartment == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "new_category_department is required when creating new category"})
 			return
 		}
-		// Create or get existing category (case-insensitive)
 		category, err := h.reportService.GetOrCreateCategory(*req.NewCategoryName, *req.NewCategoryDepartment)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create category: " + err.Error()})
@@ -61,7 +58,6 @@ func (h *ReportHandler) CreateReport(c *gin.Context) {
 		req.CategoryID = category.ID
 	}
 
-	// Validate category
 	if req.CategoryID <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "category_id or new_category_name is required"})
 		return
@@ -91,7 +87,6 @@ func (h *ReportHandler) GetPublicReports(c *gin.Context) {
 		}
 	}
 
-	// Use search if params provided, otherwise get all
 	if search != "" || categoryID != nil {
 		response, err := h.reportService.SearchPublicReports(search, categoryID)
 		if err != nil {
@@ -152,7 +147,6 @@ func (h *ReportHandler) GetMyReports(c *gin.Context) {
 		}
 	}
 
-	// Use search if params provided
 	if search != "" || categoryID != nil {
 		response, err := h.reportService.SearchMyReports(userID, search, categoryID)
 		if err != nil {
@@ -206,7 +200,6 @@ func (h *ReportHandler) UpdateStatus(c *gin.Context) {
 	userRole := c.GetHeader("X-User-Role")
 	userDept := c.GetHeader("X-User-Department")
 
-	// Only admin can update status
 	if !strings.HasPrefix(userRole, "admin_") {
 		c.JSON(http.StatusForbidden, gin.H{"error": "only admin can update report status"})
 		return
@@ -224,7 +217,6 @@ func (h *ReportHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 
-	// Validate status
 	validStatuses := map[model.ReportStatus]bool{
 		model.StatusPending:    true,
 		model.StatusAccepted:   true,
@@ -306,7 +298,6 @@ func (h *ReportHandler) CreateCategory(c *gin.Context) {
 		return
 	}
 
-	// Validate department
 	validDepts := map[string]bool{
 		"kebersihan":    true,
 		"kesehatan":     true,

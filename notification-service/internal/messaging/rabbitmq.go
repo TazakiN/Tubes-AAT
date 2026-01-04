@@ -13,23 +13,20 @@ const (
 	ExchangeName    = "cityconnect.notifications"
 	DLXExchangeName = "cityconnect.notifications.dlx"
 
-	// Main queues
 	QueueStatusUpdates = "queue.status_updates"
 	QueueReportCreated = "queue.report_created"
 	QueueVoteReceived  = "queue.vote_received"
 
-	// Dead Letter Queues
 	QueueStatusUpdatesDLQ = "queue.status_updates.dlq"
 	QueueReportCreatedDLQ = "queue.report_created.dlq"
 	QueueVoteReceivedDLQ  = "queue.vote_received.dlq"
 
-	// Routing keys
 	RoutingKeyStatusUpdate  = "report.status.updated"
 	RoutingKeyReportCreated = "report.created"
 	RoutingKeyVoteReceived  = "report.vote.received"
 
 	reconnectDelay = 5 * time.Second
-	prefetchCount  = 10 // QoS prefetch limit
+	prefetchCount  = 10
 )
 
 type QueueConfig struct {
@@ -99,57 +96,38 @@ func (r *RabbitMQ) connect() error {
 		return fmt.Errorf("channel: %w", err)
 	}
 
-	// Set QoS prefetch limit
 	if err := r.channel.Qos(prefetchCount, 0, false); err != nil {
 		return fmt.Errorf("qos: %w", err)
 	}
 
-	// Declare main exchange
 	err = r.channel.ExchangeDeclare(
 		ExchangeName,
 		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,
+		true, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("exchange declare: %w", err)
 	}
 
-	// Declare Dead Letter Exchange (DLX)
 	err = r.channel.ExchangeDeclare(
 		DLXExchangeName,
 		"topic",
-		true,  // durable
-		false, // auto-deleted
-		false, // internal
-		false, // no-wait
-		nil,
+		true, false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("dlx exchange declare: %w", err)
 	}
 
-	// Declare queues with DLQ configuration
 	for _, qc := range QueueConfigs {
-		// Declare DLQ first
 		_, err = r.channel.QueueDeclare(
 			qc.DLQName,
-			true,  // durable
-			false, // delete when unused
-			false, // exclusive
-			false, // no-wait
-			amqp.Table{
-				"x-message-ttl": int64(86400000), // 24 hours TTL for DLQ messages
-			},
+			true, false, false, false, amqp.Table{
+				"x-message-ttl": int64(86400000)},
 		)
 		if err != nil {
 			return fmt.Errorf("dlq declare %s: %w", qc.DLQName, err)
 		}
 
-		// Bind DLQ to DLX
 		err = r.channel.QueueBind(
 			qc.DLQName,
 			qc.DLQRoutingKey,
@@ -161,14 +139,9 @@ func (r *RabbitMQ) connect() error {
 			return fmt.Errorf("dlq bind %s: %w", qc.DLQName, err)
 		}
 
-		// Declare main queue with DLX configuration
 		_, err = r.channel.QueueDeclare(
 			qc.QueueName,
-			true,  // durable
-			false, // delete when unused
-			false, // exclusive
-			false, // no-wait
-			amqp.Table{
+			true, false, false, false, amqp.Table{
 				"x-dead-letter-exchange":    DLXExchangeName,
 				"x-dead-letter-routing-key": qc.DLQRoutingKey,
 			},
@@ -177,7 +150,6 @@ func (r *RabbitMQ) connect() error {
 			return fmt.Errorf("queue declare %s: %w", qc.QueueName, err)
 		}
 
-		// Bind main queue to main exchange
 		err = r.channel.QueueBind(
 			qc.QueueName,
 			qc.RoutingKey,
@@ -228,12 +200,7 @@ func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) 
 
 	msgs, err := r.channel.Consume(
 		queueName,
-		"",    // consumer tag (auto-generated)
-		false, // auto-ack (manual for retry support)
-		false, // exclusive
-		false, // no-local
-		false, // no-wait
-		nil,
+		"", false, false, false, false, nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("consume %s: %w", queueName, err)
