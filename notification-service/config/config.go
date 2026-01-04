@@ -9,6 +9,7 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Database DatabaseConfig `json:"database"`
 	RabbitMQ RabbitMQConfig `json:"rabbitmq"`
+	JWT      JWTConfig      `json:"jwt"`
 }
 
 type ServerConfig struct {
@@ -28,6 +29,10 @@ type RabbitMQConfig struct {
 	Port     string `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password"`
+}
+
+type JWTConfig struct {
+	Secret string `json:"secret"`
 }
 
 func LoadConfig(path string) (*Config, error) {

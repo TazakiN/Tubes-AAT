@@ -74,7 +74,7 @@ func main() {
 	notificationService := service.NewNotificationService(notificationRepo, sseHub)
 
 	// Initialize handler
-	notificationHandler := handler.NewNotificationHandler(notificationService)
+	notificationHandler := handler.NewNotificationHandler(notificationService, cfg.JWT.Secret)
 
 	// Setup Gin router
 	r := gin.Default()

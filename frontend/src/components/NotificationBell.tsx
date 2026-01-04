@@ -31,7 +31,13 @@ export default function NotificationBell({
         api.getNotificationStreamUrl(token || "")
       );
 
-      eventSource.onmessage = (event) => {
+      // Handle 'connected' event
+      eventSource.addEventListener("connected", (event) => {
+        console.log("SSE connected:", event.data);
+      });
+
+      // Handle 'notification' events (named events require addEventListener, not onmessage)
+      eventSource.addEventListener("notification", (event) => {
         try {
           const notification = JSON.parse(event.data) as Notification;
           setNotifications((prev) => [notification, ...prev]);
@@ -49,7 +55,7 @@ export default function NotificationBell({
         } catch (e) {
           console.error("Failed to parse notification:", e);
         }
-      };
+      });
 
       eventSource.onerror = () => {
         console.error("SSE connection error");
@@ -58,7 +64,7 @@ export default function NotificationBell({
 
       return () => eventSource.close();
     }
-  }, [user, token, sendNotification, requestPermission]);
+  }, [user, token, sendNotification, requestPermission, onNewNotification]);
 
   const loadNotifications = async () => {
     setIsLoading(true);

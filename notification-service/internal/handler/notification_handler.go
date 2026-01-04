@@ -2,22 +2,26 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"notification-service/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
 type NotificationHandler struct {
 	notificationService *service.NotificationService
+	jwtSecret           string
 }
 
-func NewNotificationHandler(notificationService *service.NotificationService) *NotificationHandler {
+func NewNotificationHandler(notificationService *service.NotificationService, jwtSecret string) *NotificationHandler {
 	return &NotificationHandler{
 		notificationService: notificationService,
+		jwtSecret:           jwtSecret,
 	}
 }
 
@@ -38,10 +42,23 @@ func (h *NotificationHandler) GetNotifications(c *gin.Context) {
 }
 
 func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
+	// Try header first (for nginx-authenticated requests)
 	userID := c.GetHeader("X-User-ID")
+
+	// If no header, validate token from query param (for EventSource)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
+		token := c.Query("token")
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		claims, err := h.validateToken(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		userID = claims["user_id"].(string)
 	}
 
 	uid, err := uuid.Parse(userID)
@@ -79,6 +96,26 @@ func (h *NotificationHandler) StreamNotifications(c *gin.Context) {
 			c.Writer.Flush()
 		}
 	}
+}
+
+func (h *NotificationHandler) validateToken(tokenString string) (jwt.MapClaims, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("invalid signing method")
+		}
+		return []byte(h.jwtSecret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil, errors.New("invalid token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, errors.New("invalid claims")
+	}
+
+	return claims, nil
 }
 
 func (h *NotificationHandler) MarkAsRead(c *gin.Context) {

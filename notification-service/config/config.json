@@ -14,5 +14,8 @@
     "port": "5672",
     "user": "cityconnect",
     "password": "cityconnect_secret"
+  },
+  "jwt": {
+    "secret": "cityconnect-poc-secret-key-2024"
   }
 }
