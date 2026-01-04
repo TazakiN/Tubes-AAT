@@ -212,36 +212,6 @@ JWT_SECRET=your-super-secret-jwt-key-change-in-production
 CONFIG_PATH=/app/config.json
 ```
 
-## Development
-
-### Run individual services
-
-```bash
-# Backend only
-docker-compose up -d postgres auth-service report-service gateway
-
-# Frontend development (with hot reload)
-cd frontend && npm install && npm run dev
-```
-
-### Rebuild after changes
-
-```bash
-# Rebuild specific service
-docker-compose build --no-cache report-service
-docker-compose up -d report-service
-
-# Rebuild all
-docker-compose up -d --build
-```
-
-### View logs
-
-```bash
-docker-compose logs -f report-service
-docker-compose logs -f auth-service
-```
-
 ## Tech Stack
 
 | Component | Technology |
