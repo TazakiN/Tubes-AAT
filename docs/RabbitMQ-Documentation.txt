@@ -1,0 +1,694 @@
+================================================================================
+                    DOKUMENTASI RABBITMQ - CITYCONNECT
+================================================================================
+                    UPDATED: Implementasi Best Practices
+================================================================================
+
+================================================================================
+1. PERAN RABBITMQ DI REPOSITORY INI
+================================================================================
+
+RabbitMQ berperan sebagai MESSAGE BROKER untuk sistem notifikasi asinkron 
+di aplikasi CityConnect (sistem pelaporan masyarakat).
+
+Fungsi utamanya:
+- Decoupling antara operasi bisnis (CRUD report/vote) dengan pengiriman notifikasi
+- Memastikan notifikasi tetap terkirim meskipun ada kegagalan sementara
+- Mendukung real-time notification via Server-Sent Events (SSE)
+
+================================================================================
+2. ARSITEKTUR MESSAGING (SETELAH UPDATE)
+================================================================================
+
+                    ┌─────────────────────────────────────────────────┐
+                    │              REPORT SERVICE (Port 3002)          │
+                    │                                                  │
+  HTTP Request      │   ┌──────────────┐    ┌──────────────────────┐  │
+  ─────────────────►│   │   Services   │───►│   Outbox Repository  │  │
+  (Create Report,   │   │              │    │   (DB Transaction)   │  │
+   Update Status,   │   │ - Report     │    └──────────┬───────────┘  │
+   Cast Vote)       │   │ - Vote       │               │              │
+                    │   └──────────────┘               │              │
+                    │                                  │              │
+                    │   ┌──────────────────────────────▼───────────┐  │
+                    │   │         OUTBOX WORKER                    │  │
+                    │   │  - Polls outbox_messages table           │  │
+                    │   │  - Publisher Confirms enabled            │  │
+                    │   │  - Marks published/failed                │  │
+                    │   └──────────────────────────────┬───────────┘  │
+                    └──────────────────────────────────│──────────────┘
+                                                       │
+                                                       ▼
+                    ┌──────────────────────────────────────────────────┐
+                    │                  RABBITMQ                         │
+                    │                                                   │
+                    │   Exchange: "cityconnect.notifications" (topic)  │
+                    │   DLX: "cityconnect.notifications.dlx" (topic)   │
+                    │                                                   │
+                    │   ┌─────────────────────────────────────────────┐ │
+                    │   │              MAIN QUEUES                    │ │
+                    │   │  (with x-dead-letter-exchange configured)   │ │
+                    │   │                                             │ │
+                    │   │  queue.status_updates ◄── report.status.updated │
+                    │   │  queue.report_created ◄── report.created        │
+                    │   │  queue.vote_received  ◄── report.vote.received  │
+                    │   └─────────────────────────────────────────────┘ │
+                    │                        │                          │
+                    │                        │ (on Nack without requeue)│
+                    │                        ▼                          │
+                    │   ┌─────────────────────────────────────────────┐ │
+                    │   │              DEAD LETTER QUEUES (DLQ)       │ │
+                    │   │  (TTL: 24 hours)                            │ │
+                    │   │                                             │ │
+                    │   │  queue.status_updates.dlq                   │ │
+                    │   │  queue.report_created.dlq                   │ │
+                    │   │  queue.vote_received.dlq                    │ │
+                    │   └─────────────────────────────────────────────┘ │
+                    └──────────────────────────────────│───────────────┘
+                                                       │
+                                                       ▼
+                    ┌──────────────────────────────────────────────────┐
+                    │        NOTIFICATION SERVICE (Port 3003)          │
+                    │        *** SERVICE TERPISAH ***                  │
+                    │                                                   │
+                    │   ┌────────────────┐    ┌────────────────────┐   │
+                    │   │  3 Consumers   │───►│  NotificationRepo  │   │
+                    │   │  (per queue)   │    │  (Save to DB)      │   │
+                    │   │                │    └────────────────────┘   │
+                    │   │  Features:     │                             │
+                    │   │  - Retry 3x    │    ┌────────────────────┐   │
+                    │   │  - Exp backoff │───►│  Idempotency Check │   │
+                    │   │  - Prefetch 10 │    │  (processed_msgs)  │   │
+                    │   └────────┬───────┘    └────────────────────┘   │
+                    │            │                                      │
+                    │            ▼                                      │
+                    │   ┌────────────────┐    ┌────────────────────┐   │
+                    │   │    SSE Hub     │───►│   Frontend/Client  │   │
+                    │   │ (Real-time)    │    │   (Push Notif)     │   │
+                    │   └────────────────┘    └────────────────────┘   │
+                    └──────────────────────────────────────────────────┘
+
+================================================================================
+3. ALUR DATA DETAIL
+================================================================================
+
+A. ALUR: STATUS UPDATE (Admin update status laporan)
+--------------------------------------------------------------------------------
+   1. Admin PATCH /reports/:id/status
+   2. ReportService.UpdateReportStatus() dipanggil
+   3. Update status di database PostgreSQL
+   4. Async goroutine publish StatusUpdateMessage ke RabbitMQ
+      - Routing key: "report.status.updated"
+      - Queue: "queue.status_updates"
+   5. Consumer handleStatusUpdate() menerima message
+   6. Simpan notifikasi ke tabel notifications (database)
+   7. Push ke SSE Hub → kirim ke browser user via Server-Sent Events
+
+B. ALUR: REPORT CREATED (Warga membuat laporan baru)
+--------------------------------------------------------------------------------
+   1. Warga POST /reports
+   2. ReportService.CreateReport() dipanggil
+   3. Simpan report ke database PostgreSQL
+   4. Async goroutine publish ReportCreatedMessage ke RabbitMQ
+      - Routing key: "report.created"
+      - Queue: "queue.report_created"
+   5. Consumer handleReportCreated() menerima message
+   6. Saat ini hanya di-ACK (TODO: notify admins, update dashboards)
+
+C. ALUR: VOTE RECEIVED (User melakukan vote pada laporan)
+--------------------------------------------------------------------------------
+   1. User POST /reports/:id/vote
+   2. VoteService.CastVote() dipanggil
+   3. Simpan vote ke database, update vote_score
+   4. Async goroutine publish VoteReceivedMessage ke RabbitMQ
+      - Routing key: "report.vote.received"
+      - Queue: "queue.vote_received"
+   5. Consumer handleVoteReceived() menerima message
+   6. Simpan notifikasi ke database
+   7. Push ke SSE Hub → kirim ke browser reporter (pemilik laporan)
+
+================================================================================
+4. STRUKTUR MESSAGE
+================================================================================
+
+StatusUpdateMessage:
+{
+    "report_id": "uuid",
+    "report_title": "string",
+    "new_status": "pending|in_progress|resolved|rejected",
+    "reporter_id": "uuid (optional)",
+    "timestamp": 1234567890
+}
+
+ReportCreatedMessage:
+{
+    "report_id": "uuid",
+    "report_title": "string",
+    "category_id": 1,
+    "category_name": "string",
+    "reporter_id": "uuid (optional)",
+    "reporter_name": "string (optional)",
+    "privacy_level": "public|anonymous",
+    "timestamp": 1234567890
+}
+
+VoteReceivedMessage:
+{
+    "report_id": "uuid",
+    "report_title": "string",
+    "reporter_id": "uuid",
+    "voter_id": "uuid",
+    "vote_type": "upvote|downvote",
+    "new_score": 10,
+    "timestamp": 1234567890
+}
+
+================================================================================
+5. KONFIGURASI (SETELAH UPDATE)
+================================================================================
+
+Docker Compose Services:
+- rabbitmq:3.12-management-alpine (Port AMQP: 5672, Management: 15672)
+- report-service (Port 3002) - Publisher only
+- notification-service (Port 3003) - Consumer only (NEW!)
+
+Exchange:
+- Main: "cityconnect.notifications" (topic, durable)
+- DLX: "cityconnect.notifications.dlx" (topic, durable)
+
+Main Queue Properties:
+- Durable: true
+- Auto-delete: false
+- Exclusive: false
+- Auto-ACK: false (manual acknowledgment)
+- x-dead-letter-exchange: "cityconnect.notifications.dlx"
+- x-dead-letter-routing-key: "dlq.<queue_name>"
+
+DLQ Properties:
+- Durable: true
+- x-message-ttl: 86400000 (24 hours)
+
+Consumer Configuration:
+- Prefetch count: 10
+- Retry attempts: 3
+- Retry delay: exponential backoff (1s → 5s → 30s max)
+
+================================================================================
+6. DATABASE TABLES BARU
+================================================================================
+
+A. OUTBOX_MESSAGES (Transactional Outbox Pattern)
+--------------------------------------------------------------------------------
+CREATE TABLE outbox_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    routing_key VARCHAR(255) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    published_at TIMESTAMP,
+    retry_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    status VARCHAR(20) DEFAULT 'pending'  -- pending, published, failed
+);
+
+B. PROCESSED_MESSAGES (Idempotency)
+--------------------------------------------------------------------------------
+CREATE TABLE processed_messages (
+    message_id VARCHAR(255) PRIMARY KEY,
+    processed_at TIMESTAMP DEFAULT NOW()
+);
+
+
+================================================================================
+7. FITUR YANG DIIMPLEMENTASI
+================================================================================
+
+A. PEMISAHAN SERVICE (Decoupling) ✅
+--------------------------------------------------------------------------------
+SEBELUM:
+  report-service (publisher + consumer dalam 1 service)
+
+SESUDAH:
+  report-service (port 3002) - Publisher only
+       │
+       ▼
+  [RabbitMQ]
+       │
+       ▼
+  notification-service (port 3003) - Consumer only
+
+BENEFIT:
+  - Independent scaling (consumer bisa di-scale terpisah)
+  - Independent deployment (bug di consumer tidak matikan API)
+  - Failure isolation (satu service down, yang lain tetap jalan)
+  - Resource tidak rebutan
+
+B. TRANSACTIONAL OUTBOX PATTERN ✅
+--------------------------------------------------------------------------------
+SEBELUM:
+  1. Update database
+  2. Async goroutine publish ke RabbitMQ
+  3. Jika RabbitMQ down → message hilang!
+
+SESUDAH:
+  1. Update database + INSERT ke outbox_messages (SAME TRANSACTION)
+  2. Outbox Worker polls outbox_messages
+  3. Publish dengan Publisher Confirms
+  4. Mark as published setelah ACK dari RabbitMQ
+  5. Jika gagal → retry 5x, lalu mark as failed
+
+BENEFIT:
+  - Guaranteed delivery (message tidak hilang)
+  - Atomic operation (DB + message dalam 1 transaksi)
+  - Audit trail (semua message tercatat di outbox)
+
+CODE FLOW:
+  // report_service.go
+  func (s *ReportService) UpdateReportStatus(...) {
+      s.reportRepo.UpdateStatus(reportID, status)  // Step 1: DB update
+      s.outboxRepo.Create(routingKey, msg)         // Step 2: Save to outbox (atomic)
+  }
+
+  // outbox_worker.go (background)
+  func (w *OutboxWorker) processPendingMessages() {
+      messages := w.outboxRepo.GetPendingMessages(batchSize)
+      for _, msg := range messages {
+          err := w.publishWithConfirm(msg.RoutingKey, msg.Payload)
+          if err != nil {
+              w.outboxRepo.MarkAsFailed(msg.ID, err.Error())
+          } else {
+              w.outboxRepo.MarkAsPublished(msg.ID)
+          }
+      }
+  }
+
+C. DEAD LETTER QUEUE (DLQ) ✅
+--------------------------------------------------------------------------------
+
+*** PENJELASAN PENTING: KENAPA 6 QUEUE? ***
+
+Total 6 queue BUKAN duplikat! Fungsinya BERBEDA:
+
+┌───────────────────────────────────────────────────────────────────────────────┐
+│  3 MAIN QUEUES (untuk message normal)                                         │
+│  ─────────────────────────────────────                                        │
+│  1. queue.status_updates    → Consumer proses notifikasi status update        │
+│  2. queue.report_created    → Consumer proses notifikasi report baru          │
+│  3. queue.vote_received     → Consumer proses notifikasi vote                 │
+│                                                                               │
+│  Jika SUKSES → message di-ACK dan DIHAPUS dari queue                          │
+│  Jika GAGAL setelah 3x retry → message di-NACK dan PINDAH ke DLQ              │
+└───────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ (Nack without requeue)
+                                    ▼
+┌───────────────────────────────────────────────────────────────────────────────┐
+│  3 DLQ QUEUES (untuk message yang GAGAL diproses)                             │
+│  ─────────────────────────────────────────────────                            │
+│  1. queue.status_updates.dlq  → Menyimpan failed status update messages       │
+│  2. queue.report_created.dlq  → Menyimpan failed report created messages      │
+│  3. queue.vote_received.dlq   → Menyimpan failed vote messages                │
+│                                                                               │
+│  TTL: 24 jam (message otomatis dihapus setelah 24 jam)                        │
+│  Kegunaan:                                                                    │
+│    - Debugging: lihat message apa yang gagal                                  │
+│    - Audit: track failure rate                                                │
+│    - Manual retry: republish message setelah fix bug                          │
+└───────────────────────────────────────────────────────────────────────────────┘
+
+ANALOGI SEDERHANA:
+  Main Queue  = Inbox email (normal processing)
+  DLQ         = Spam/Trash folder (failed messages untuk review)
+
+KENAPA DLQ TIDAK DIHAPUS?
+  Tanpa DLQ:
+    - Message gagal → HILANG selamanya atau infinite retry loop
+    - Tidak ada cara debug kenapa gagal
+    - Bisa menyebabkan queue tersumbat
+
+  Dengan DLQ:
+    - Message gagal → TERSIMPAN untuk analisis
+    - Bisa di-debug dan di-retry manual
+    - Main queue tetap bersih
+
+FLOW DIAGRAM:
+
+  Message masuk → Main Queue → Consumer proses
+                       │
+                       ├── SUKSES → Ack → Message dihapus ✓
+                       │
+                       └── GAGAL (3x retry) → Nack → Pindah ke DLQ
+                                                          │
+                                              ┌───────────┴───────────┐
+                                              │ DLQ (simpan 24 jam)   │
+                                              │ - Admin bisa inspect  │
+                                              │ - Fix bug             │
+                                              │ - Manual republish    │
+                                              └───────────────────────┘
+
+KONFIGURASI:
+  _, err = channel.QueueDeclare(
+      queueName,
+      true,  // durable
+      false, // delete when unused
+      false, // exclusive
+      false, // no-wait
+      amqp.Table{
+          "x-dead-letter-exchange":    "cityconnect.notifications.dlx",
+          "x-dead-letter-routing-key": "dlq.<queue_name>",
+      },
+  )
+
+D. RETRY WITH EXPONENTIAL BACKOFF ✅
+--------------------------------------------------------------------------------
+Menggunakan library github.com/avast/retry-go:
+
+  err = retry.Do(
+      func() error {
+          return handler(msg)
+      },
+      retry.Attempts(3),              // Max 3 attempts
+      retry.Delay(1 * time.Second),   // Initial delay 1s
+      retry.MaxDelay(30 * time.Second), // Max delay 30s
+      retry.DelayType(retry.BackOffDelay), // Exponential backoff
+  )
+
+  if err != nil {
+      // After 3 retries, send to DLQ
+      msg.Nack(false, false)
+  }
+
+RETRY TIMELINE:
+  Attempt 1: immediate
+  Attempt 2: wait 1s
+  Attempt 3: wait 2s
+  → If still fails → DLQ
+
+E. IDEMPOTENCY (Message Deduplication) ✅
+--------------------------------------------------------------------------------
+Setiap message di-track di tabel processed_messages:
+
+  // Check before processing
+  processed, _ := c.notificationRepo.IsMessageProcessed(messageID)
+  if processed {
+      msg.Ack(false)  // Skip, already processed
+      return
+  }
+
+  // Process message
+  handler(msg)
+
+  // Mark as processed
+  c.notificationRepo.MarkMessageProcessed(messageID)
+
+BENEFIT:
+  - Safe untuk retry (tidak double-process)
+  - Safe untuk consumer restart (tidak re-process old messages)
+
+F. PUBLISHER CONFIRMS ✅
+--------------------------------------------------------------------------------
+  // Enable confirms mode
+  channel.Confirm(false)
+  confirms := channel.NotifyPublish(make(chan amqp.Confirmation, 1))
+
+  // Publish
+  channel.PublishWithContext(ctx, exchange, routingKey, ...)
+
+  // Wait for confirmation
+  confirm := <-confirms
+  if !confirm.Ack {
+      return fmt.Errorf("message not acknowledged")
+  }
+
+G. PREFETCH LIMIT (QoS) ✅
+--------------------------------------------------------------------------------
+  channel.Qos(
+      10,    // prefetch count - max 10 unacked messages
+      0,     // prefetch size (0 = unlimited)
+      false, // per consumer, not global
+  )
+
+BENEFIT:
+  - Consumer tidak overwhelmed
+  - Fair distribution jika multiple consumers
+
+H. GRACEFUL SHUTDOWN ✅
+--------------------------------------------------------------------------------
+  quit := make(chan os.Signal, 1)
+  signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+  go func() {
+      <-quit
+      consumer.Stop()  // Wait for in-flight messages
+      outboxWorker.Stop()
+      os.Exit(0)
+  }()
+
+================================================================================
+8. CARA TESTING
+================================================================================
+
+A. Jalankan semua services:
+   docker-compose up -d --build
+
+B. Test dengan script:
+   # PowerShell
+   .\scripts\test-rabbitmq-features.ps1
+
+   # Bash
+   ./scripts/test-rabbitmq-features.sh
+
+C. Manual testing:
+   1. Login dan dapatkan token
+   2. Create report (trigger queue.report_created)
+   3. Update status (trigger queue.status_updates)
+   4. Vote (trigger queue.vote_received)
+   5. Check RabbitMQ Management UI: http://localhost:15672
+
+D. Check DLQ:
+   curl -u cityconnect:cityconnect_secret \
+     http://localhost:15672/api/queues | jq '.[] | select(.name | test("dlq"))'
+
+E. Check outbox stats:
+   curl http://localhost:3002/admin/outbox/stats
+
+================================================================================
+9. MONITORING ENDPOINTS
+================================================================================
+
+Report Service (http://localhost:3002):
+- GET /health - Basic health check
+- GET /admin/outbox/stats - Outbox statistics
+
+Notification Service (http://localhost:3003):
+- GET /health - Basic health check
+- GET /health/detailed - Detailed health with features
+- GET /admin/dlq/stats - DLQ statistics (placeholder)
+
+RabbitMQ Management (http://localhost:15672):
+- User: cityconnect
+- Password: cityconnect_secret
+
+================================================================================
+10. TROUBLESHOOTING
+================================================================================
+
+A. Messages stuck in queue:
+   - Check notification-service logs
+   - Check DLQ for failed messages
+   - Verify consumer is connected
+
+B. Messages in DLQ:
+   - Inspect message content in RabbitMQ UI
+   - Check notification-service logs for error
+   - Fix bug, then republish from DLQ
+
+C. Outbox growing:
+   - Check outbox_messages table status
+   - Verify outbox worker is running
+   - Check RabbitMQ connection
+
+D. Duplicate notifications:
+   - Should not happen with idempotency
+   - Check processed_messages table
+   - Verify message_id generation
+
+================================================================================
+11. FILE STRUCTURE (SETELAH UPDATE)
+================================================================================
+
+report-service/
+├── main.go                 # No consumer, has outbox worker
+├── internal/
+│   ├── messaging/
+│   │   ├── rabbitmq.go     # Publisher only
+│   │   └── outbox_worker.go # NEW: Background publisher
+│   ├── repository/
+│   │   ├── outbox_repository.go # NEW: Outbox DB operations
+│   │   └── ...
+│   └── service/
+│       ├── report_service.go  # Uses outboxRepo instead of direct publish
+│       └── vote_service.go    # Uses outboxRepo instead of direct publish
+
+notification-service/        # NEW SERVICE
+├── main.go
+├── Dockerfile
+├── config/
+│   ├── config.go
+│   └── config.json
+└── internal/
+    ├── handler/
+    │   └── notification_handler.go
+    ├── messaging/
+    │   ├── rabbitmq.go      # With DLQ configuration
+    │   └── consumer.go      # With retry & idempotency
+    ├── model/
+    │   └── model.go
+    ├── repository/
+    │   └── notification_repository.go
+    └── service/
+        └── notification_service.go
+
+database/
+└── init.sql                 # Added: outbox_messages, processed_messages
+
+================================================================================
+12. FAQ - PERTANYAAN UMUM
+================================================================================
+
+Q1: KENAPA ADA 6 QUEUE? BUKANNYA CUMA 3?
+--------------------------------------------------------------------------------
+A:  6 queue terdiri dari:
+    - 3 Main Queue: untuk proses message normal
+    - 3 DLQ (Dead Letter Queue): untuk simpan message yang GAGAL
+
+    DLQ BUKAN duplikat! Fungsinya berbeda:
+    - Main Queue: message diproses, kalau sukses dihapus
+    - DLQ: tempat parkir message yang gagal untuk debugging/retry
+
+Q2: KENAPA DLQ TIDAK DIHAPUS SAJA?
+--------------------------------------------------------------------------------
+A:  Tanpa DLQ:
+    - Message gagal hilang selamanya
+    - Tidak bisa debug kenapa gagal
+    - Atau terjadi infinite retry loop
+
+    Dengan DLQ:
+    - Message gagal tersimpan 24 jam
+    - Bisa di-inspect di RabbitMQ UI
+    - Bisa republish setelah fix bug
+
+Q3: APA BEDANYA SEBELUM DAN SESUDAH UPDATE?
+--------------------------------------------------------------------------------
+A:  SEBELUM:
+    - 1 service (report-service) handle semua
+    - Tidak ada retry mechanism
+    - Tidak ada DLQ
+    - Message bisa hilang kalau gagal
+    - Tidak ada outbox pattern
+
+    SESUDAH:
+    - 2 service terpisah (report + notification)
+    - Retry 3x dengan exponential backoff
+    - DLQ untuk failed messages
+    - Outbox pattern untuk guaranteed delivery
+    - Idempotency check untuk prevent duplicates
+
+Q4: BAGAIMANA CARA SCALE UNTUK 2.5 JUTA USER?
+--------------------------------------------------------------------------------
+A:  Arsitektur ini mendukung horizontal scaling:
+    
+    1. Notification Service (Consumer):
+       - Bisa di-scale multiple replicas
+       - RabbitMQ akan load balance antar consumers
+       - Prefetch limit 10 per consumer
+       
+    2. Report Service (Publisher):
+       - Bisa di-scale karena outbox pattern
+       - Setiap instance punya outbox worker sendiri
+       
+    3. RabbitMQ:
+       - Bisa di-cluster untuk HA
+       - Bisa add replicas untuk load balancing
+
+    Estimasi untuk 2.5M users:
+    - Single consumer: ~5000 msg/sec
+    - Target: 2.5M notifications / 30 min = ~1400 msg/sec
+    - Minimal 1 consumer cukup, tapi 3-5 untuk safety margin
+
+================================================================================
+13. TEST SCRIPTS
+================================================================================
+
+Available test scripts di folder scripts/:
+
+A. test-all-components.ps1
+   - Test komprehensif semua komponen
+   - Health checks, queue config, message flow
+   - Usage: .\scripts\test-all-components.ps1
+
+B. test-extreme-load-2.5m.ps1
+   - Stress test untuk simulasi 2.5M users
+   - Parameters:
+     -Users         : Jumlah concurrent users (default: 1000)
+     -ReportsPerUser: Reports per user (default: 10)
+     -VotesPerReport: Votes per report (default: 5)
+     -Insane        : Mode gila (10x semua parameter)
+   
+   - Usage:
+     .\scripts\test-extreme-load-2.5m.ps1                    # Default
+     .\scripts\test-extreme-load-2.5m.ps1 -Users 5000       # 5000 users
+     .\scripts\test-extreme-load-2.5m.ps1 -Insane           # Extreme mode
+
+C. test-rabbitmq-features.ps1
+   - Test specific RabbitMQ features
+   - DLQ, retry, idempotency
+
+================================================================================
+14. CHANGELOG - DAFTAR PERUBAHAN
+================================================================================
+
+VERSION: rabbit-mq-new branch
+DATE: January 2026
+
+PERUBAHAN ARSITEKTUR:
+[+] Memisahkan consumer ke notification-service (port 3003)
+[+] Report-service sekarang hanya publisher (port 3002)
+[+] Implementasi Transactional Outbox Pattern
+[+] Dead Letter Queue untuk semua 3 queue
+
+PERUBAHAN DATABASE:
+[+] Tabel outbox_messages untuk outbox pattern
+[+] Tabel processed_messages untuk idempotency
+
+PERUBAHAN RABBITMQ:
+[+] Exchange DLX: cityconnect.notifications.dlx
+[+] 3 DLQ queues dengan TTL 24 jam
+[+] Publisher Confirms di outbox worker
+[+] Prefetch limit 10 per consumer
+
+PERUBAHAN CODE:
+[~] report-service/main.go - hapus consumer, tambah outbox worker
+[~] report-service/internal/service/* - pakai outboxRepo
+[+] report-service/internal/repository/outbox_repository.go
+[+] report-service/internal/messaging/outbox_worker.go
+[+] notification-service/* - service baru
+
+PERUBAHAN CONFIG:
+[~] docker-compose.yml - tambah notification-service
+[~] gateway/nginx.conf - route notifications ke notification-service
+[~] go.work - tambah notification-service
+
+================================================================================
+15. REFERENSI
+================================================================================
+
+- RabbitMQ Best Practices: https://www.rabbitmq.com/production-checklist.html
+- Reliability Guide: https://www.rabbitmq.com/reliability.html
+- Dead Letter Exchange: https://www.rabbitmq.com/dlx.html
+- Transactional Outbox: https://microservices.io/patterns/data/transactional-outbox.html
+- avast/retry-go: https://github.com/avast/retry-go
+
+================================================================================
+                           END OF DOCUMENTATION
+================================================================================
+

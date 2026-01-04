@@ -2,5 +2,6 @@ go 1.21
 
 use (
 	./auth-service
+	./notification-service
 	./report-service
 )

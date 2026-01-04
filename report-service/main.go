@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"report-service/config"
 	"report-service/internal/handler"
@@ -16,6 +19,11 @@ import (
 )
 
 func main() {
+	log.Println("==============================================")
+	log.Println("  REPORT SERVICE - Starting Up")
+	log.Println("  Features: Outbox Pattern, Publisher Confirms")
+	log.Println("==============================================")
+
 	cfg, err := config.LoadConfig("config/config.json")
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
@@ -39,7 +47,7 @@ func main() {
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
-	log.Println("Connected to database")
+	log.Println("✓ Connected to database")
 
 	// Connect to RabbitMQ
 	rmq, err := messaging.NewRabbitMQ(
@@ -52,32 +60,25 @@ func main() {
 		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
 	}
 	defer rmq.Close()
-	log.Println("Connected to RabbitMQ")
-
-	// Initialize SSE Hub
-	sseHub := messaging.NewSSEHub()
-	go sseHub.Run()
+	log.Println("✓ Connected to RabbitMQ")
 
 	// Initialize repositories
 	reportRepo := repository.NewReportRepository(db)
 	voteRepo := repository.NewVoteRepository(db)
-	notificationRepo := repository.NewNotificationRepository(db)
+	outboxRepo := repository.NewOutboxRepository(db)
 
-	// Start notification consumer
-	consumer := messaging.NewNotificationConsumer(rmq, notificationRepo, sseHub)
-	consumer.Start()
-	defer consumer.Stop()
-	log.Println("Notification consumer started")
+	// Start outbox worker (replaces direct async publishing)
+	outboxWorker := messaging.NewOutboxWorker(outboxRepo, rmq)
+	outboxWorker.Start()
+	log.Println("✓ Outbox worker started (Publisher Confirms enabled)")
 
-	// Initialize services
-	reportService := service.NewReportService(reportRepo, cfg.Anonymous, rmq)
-	voteService := service.NewVoteService(voteRepo, reportRepo, rmq)
-	notificationService := service.NewNotificationService(notificationRepo, sseHub)
+	// Initialize services with outbox pattern
+	reportService := service.NewReportService(reportRepo, outboxRepo, cfg.Anonymous, rmq, db)
+	voteService := service.NewVoteService(voteRepo, reportRepo, outboxRepo, rmq)
 
 	// Initialize handlers
 	reportHandler := handler.NewReportHandler(reportService)
 	voteHandler := handler.NewVoteHandler(voteService)
-	notificationHandler := handler.NewNotificationHandler(notificationService)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -103,17 +104,34 @@ func main() {
 	r.DELETE("/:id/vote", voteHandler.RemoveVote)
 	r.GET("/:id/vote", voteHandler.GetVote)
 
-	// Notification routes (auth required)
-	notifications := r.Group("/notifications")
-	{
-		notifications.GET("", notificationHandler.GetNotifications)
-		notifications.GET("/stream", notificationHandler.StreamNotifications)
-		notifications.PATCH("/:id/read", notificationHandler.MarkAsRead)
-		notifications.PATCH("/read-all", notificationHandler.MarkAllAsRead)
-	}
+	// Admin/monitoring routes
+	r.GET("/admin/outbox/stats", func(c *gin.Context) {
+		stats, err := outboxWorker.GetStats()
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"outbox_stats": stats})
+	})
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		log.Println("\nShutdown signal received...")
+		outboxWorker.Stop()
+		log.Println("Report service stopped gracefully")
+		os.Exit(0)
+	}()
 
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
-	log.Printf("Report service starting on %s", addr)
+	log.Println("==============================================")
+	log.Printf("  Report service listening on %s", addr)
+	log.Println("  NOTE: Consumer moved to notification-service")
+	log.Println("==============================================")
+
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

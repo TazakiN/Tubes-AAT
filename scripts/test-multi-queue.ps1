@@ -103,3 +103,6 @@ Write-Host "`n[OK] Updated $($reportIds.Count) statuses in $($sw.ElapsedMillisec
 # Summary
 Write-Host "`nLOAD TEST COMPLETE" -ForegroundColor Cyan
 Write-Host "Total: $($count * 3) ops (reports: $count, votes: $count, status: $count)"
+
+# Explicit success exit
+exit 0

@@ -15,13 +15,15 @@ import (
 type VoteService struct {
 	voteRepo   *repository.VoteRepository
 	reportRepo *repository.ReportRepository
+	outboxRepo *repository.OutboxRepository
 	rmq        *messaging.RabbitMQ
 }
 
-func NewVoteService(voteRepo *repository.VoteRepository, reportRepo *repository.ReportRepository, rmq *messaging.RabbitMQ) *VoteService {
+func NewVoteService(voteRepo *repository.VoteRepository, reportRepo *repository.ReportRepository, outboxRepo *repository.OutboxRepository, rmq *messaging.RabbitMQ) *VoteService {
 	return &VoteService{
 		voteRepo:   voteRepo,
 		reportRepo: reportRepo,
+		outboxRepo: outboxRepo,
 		rmq:        rmq,
 	}
 }
@@ -56,27 +58,26 @@ func (s *VoteService) CastVote(reportIDStr, userIDStr string, voteType model.Vot
 		return nil, err
 	}
 
-	// async publish ke RabbitMQ
-	if s.rmq != nil {
-		go func() {
-			reporterIDStr := ""
-			if report.ReporterID != nil {
-				reporterIDStr = report.ReporterID.String()
-			}
+	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
+	if s.outboxRepo != nil {
+		reporterIDStr := ""
+		if report.ReporterID != nil {
+			reporterIDStr = report.ReporterID.String()
+		}
 
-			msg := messaging.VoteReceivedMessage{
-				ReportID:    reportID.String(),
-				ReportTitle: report.Title,
-				ReporterID:  reporterIDStr,
-				VoterID:     userIDStr,
-				VoteType:    string(voteType),
-				NewScore:    newScore,
-				Timestamp:   time.Now().Unix(),
-			}
-			if err := s.rmq.PublishVoteReceived(msg); err != nil {
-				log.Printf("rmq publish failed: %v", err)
-			}
-		}()
+		msg := messaging.VoteReceivedMessage{
+			ReportID:    reportID.String(),
+			ReportTitle: report.Title,
+			ReporterID:  reporterIDStr,
+			VoterID:     userIDStr,
+			VoteType:    string(voteType),
+			NewScore:    newScore,
+			Timestamp:   time.Now().Unix(),
+		}
+
+		if err := s.outboxRepo.Create(messaging.RoutingKeyVoteReceived, msg); err != nil {
+			log.Printf("outbox save failed: %v", err)
+		}
 	}
 
 	return &model.VoteResponse{

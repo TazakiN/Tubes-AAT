@@ -9,6 +9,7 @@ services:
     depends_on:
       - auth-service
       - report-service
+      - notification-service
       - frontend
     networks:
       - app-network
@@ -37,6 +38,23 @@ services:
       - "3002:3002"
     environment:
       - PORT=3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # --- NOTIFICATION SERVICE (Go) - NEW! ---
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
     depends_on:
       postgres:
         condition: service_healthy

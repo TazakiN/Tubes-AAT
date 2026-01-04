@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -17,15 +18,19 @@ import (
 
 type ReportService struct {
 	reportRepo *repository.ReportRepository
+	outboxRepo *repository.OutboxRepository
 	anonConfig config.AnonymousConfig
 	rmq        *messaging.RabbitMQ
+	db         *sql.DB
 }
 
-func NewReportService(reportRepo *repository.ReportRepository, anonConfig config.AnonymousConfig, rmq *messaging.RabbitMQ) *ReportService {
+func NewReportService(reportRepo *repository.ReportRepository, outboxRepo *repository.OutboxRepository, anonConfig config.AnonymousConfig, rmq *messaging.RabbitMQ, db *sql.DB) *ReportService {
 	return &ReportService{
 		reportRepo: reportRepo,
+		outboxRepo: outboxRepo,
 		anonConfig: anonConfig,
 		rmq:        rmq,
+		db:         db,
 	}
 }
 
@@ -66,31 +71,30 @@ func (s *ReportService) CreateReport(req *model.CreateReportRequest, userID stri
 		return nil, err
 	}
 
-	// Publish to RabbitMQ asynchronously
-	if s.rmq != nil {
-		go func() {
-			reporterIDStr := ""
-			if report.ReporterID != nil {
-				reporterIDStr = report.ReporterID.String()
-			}
-			reporterNameStr := ""
-			if report.ReporterName != nil {
-				reporterNameStr = *report.ReporterName
-			}
+	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
+	if s.outboxRepo != nil {
+		reporterIDStr := ""
+		if report.ReporterID != nil {
+			reporterIDStr = report.ReporterID.String()
+		}
+		reporterNameStr := ""
+		if report.ReporterName != nil {
+			reporterNameStr = *report.ReporterName
+		}
 
-			msg := messaging.ReportCreatedMessage{
-				ReportID:     report.ID.String(),
-				ReportTitle:  report.Title,
-				CategoryID:   report.CategoryID,
-				ReporterID:   reporterIDStr,
-				ReporterName: reporterNameStr,
-				PrivacyLevel: string(report.PrivacyLevel),
-				Timestamp:    time.Now().Unix(),
-			}
-			if err := s.rmq.PublishReportCreated(msg); err != nil {
-				log.Printf("rmq publish failed: %v", err)
-			}
-		}()
+		msg := messaging.ReportCreatedMessage{
+			ReportID:     report.ID.String(),
+			ReportTitle:  report.Title,
+			CategoryID:   report.CategoryID,
+			ReporterID:   reporterIDStr,
+			ReporterName: reporterNameStr,
+			PrivacyLevel: string(report.PrivacyLevel),
+			Timestamp:    time.Now().Unix(),
+		}
+
+		if err := s.outboxRepo.Create(messaging.RoutingKeyReportCreated, msg); err != nil {
+			log.Printf("outbox save failed: %v", err)
+		}
 	}
 
 	// Clear hash from response
@@ -218,8 +222,8 @@ func (s *ReportService) UpdateReportStatus(reportID uuid.UUID, status model.Repo
 		return err
 	}
 
-	// publish ke rabbitmq
-	if s.rmq != nil {
+	// Save to outbox for reliable publishing (Transactional Outbox Pattern)
+	if s.outboxRepo != nil {
 		msg := messaging.StatusUpdateMessage{
 			ReportID:    reportID.String(),
 			ReportTitle: report.Title,
@@ -231,11 +235,9 @@ func (s *ReportService) UpdateReportStatus(reportID uuid.UUID, status model.Repo
 			msg.ReporterID = report.ReporterID.String()
 		}
 
-		go func() {
-			if err := s.rmq.PublishStatusUpdate(msg); err != nil {
-				log.Printf("rmq publish failed: %v", err)
-			}
-		}()
+		if err := s.outboxRepo.Create(messaging.RoutingKeyStatusUpdate, msg); err != nil {
+			log.Printf("outbox save failed: %v", err)
+		}
 	}
 
 	return nil

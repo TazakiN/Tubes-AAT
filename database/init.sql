@@ -126,6 +126,40 @@ WHERE
     is_read = FALSE;
 
 -- =====================
+-- OUTBOX TABLE (Transactional Outbox Pattern)
+-- =====================
+-- Stores messages to be published to RabbitMQ
+CREATE TABLE outbox_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    routing_key VARCHAR(255) NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    published_at TIMESTAMP,
+    retry_count INTEGER DEFAULT 0,
+    last_error TEXT,
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'published', 'failed'))
+);
+
+CREATE INDEX idx_outbox_pending ON outbox_messages (status, created_at)
+WHERE status = 'pending';
+
+CREATE INDEX idx_outbox_status ON outbox_messages (status);
+
+-- =====================
+-- PROCESSED MESSAGES TABLE (Idempotency)
+-- =====================
+-- Tracks processed message IDs to prevent duplicate processing
+CREATE TABLE processed_messages (
+    message_id VARCHAR(255) PRIMARY KEY,
+    processed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_processed_messages_time ON processed_messages (processed_at);
+
+-- Clean up old processed messages (older than 7 days) - run periodically
+-- DELETE FROM processed_messages WHERE processed_at < NOW() - INTERVAL '7 days';
+
+-- =====================
 -- SEED DATA - Categories
 -- =====================
 INSERT INTO

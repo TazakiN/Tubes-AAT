@@ -1,8 +1,6 @@
 package messaging
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -15,6 +13,7 @@ const (
 	ExchangeName    = "cityconnect.notifications"
 	DLXExchangeName = "cityconnect.notifications.dlx"
 
+	// Main queues
 	QueueStatusUpdates = "queue.status_updates"
 	QueueReportCreated = "queue.report_created"
 	QueueVoteReceived  = "queue.vote_received"
@@ -24,54 +23,41 @@ const (
 	QueueReportCreatedDLQ = "queue.report_created.dlq"
 	QueueVoteReceivedDLQ  = "queue.vote_received.dlq"
 
+	// Routing keys
 	RoutingKeyStatusUpdate  = "report.status.updated"
 	RoutingKeyReportCreated = "report.created"
 	RoutingKeyVoteReceived  = "report.vote.received"
 
 	reconnectDelay = 5 * time.Second
-	publishTimeout = 5 * time.Second
+	prefetchCount  = 10 // QoS prefetch limit
 )
 
-type QueueBinding struct {
+type QueueConfig struct {
 	QueueName     string
 	RoutingKey    string
 	DLQName       string
 	DLQRoutingKey string
 }
 
-var QueueBindings = []QueueBinding{
-	{QueueStatusUpdates, RoutingKeyStatusUpdate, QueueStatusUpdatesDLQ, "dlq.status_updates"},
-	{QueueReportCreated, RoutingKeyReportCreated, QueueReportCreatedDLQ, "dlq.report_created"},
-	{QueueVoteReceived, RoutingKeyVoteReceived, QueueVoteReceivedDLQ, "dlq.vote_received"},
-}
-
-type StatusUpdateMessage struct {
-	ReportID    string `json:"report_id"`
-	ReportTitle string `json:"report_title"`
-	NewStatus   string `json:"new_status"`
-	ReporterID  string `json:"reporter_id,omitempty"`
-	Timestamp   int64  `json:"timestamp"`
-}
-
-type ReportCreatedMessage struct {
-	ReportID     string `json:"report_id"`
-	ReportTitle  string `json:"report_title"`
-	CategoryID   int    `json:"category_id"`
-	CategoryName string `json:"category_name"`
-	ReporterID   string `json:"reporter_id,omitempty"`
-	ReporterName string `json:"reporter_name,omitempty"`
-	PrivacyLevel string `json:"privacy_level"`
-	Timestamp    int64  `json:"timestamp"`
-}
-
-type VoteReceivedMessage struct {
-	ReportID    string `json:"report_id"`
-	ReportTitle string `json:"report_title"`
-	ReporterID  string `json:"reporter_id"`
-	VoterID     string `json:"voter_id"`
-	VoteType    string `json:"vote_type"`
-	NewScore    int    `json:"new_score"`
-	Timestamp   int64  `json:"timestamp"`
+var QueueConfigs = []QueueConfig{
+	{
+		QueueName:     QueueStatusUpdates,
+		RoutingKey:    RoutingKeyStatusUpdate,
+		DLQName:       QueueStatusUpdatesDLQ,
+		DLQRoutingKey: "dlq.status_updates",
+	},
+	{
+		QueueName:     QueueReportCreated,
+		RoutingKey:    RoutingKeyReportCreated,
+		DLQName:       QueueReportCreatedDLQ,
+		DLQRoutingKey: "dlq.report_created",
+	},
+	{
+		QueueName:     QueueVoteReceived,
+		RoutingKey:    RoutingKeyVoteReceived,
+		DLQName:       QueueVoteReceivedDLQ,
+		DLQRoutingKey: "dlq.vote_received",
+	},
 }
 
 type RabbitMQ struct {
@@ -113,6 +99,11 @@ func (r *RabbitMQ) connect() error {
 		return fmt.Errorf("channel: %w", err)
 	}
 
+	// Set QoS prefetch limit
+	if err := r.channel.Qos(prefetchCount, 0, false); err != nil {
+		return fmt.Errorf("qos: %w", err)
+	}
+
 	// Declare main exchange
 	err = r.channel.ExchangeDeclare(
 		ExchangeName,
@@ -142,10 +133,10 @@ func (r *RabbitMQ) connect() error {
 	}
 
 	// Declare queues with DLQ configuration
-	for _, qb := range QueueBindings {
+	for _, qc := range QueueConfigs {
 		// Declare DLQ first
 		_, err = r.channel.QueueDeclare(
-			qb.DLQName,
+			qc.DLQName,
 			true,  // durable
 			false, // delete when unused
 			false, // exclusive
@@ -155,51 +146,51 @@ func (r *RabbitMQ) connect() error {
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("dlq declare %s: %w", qb.DLQName, err)
+			return fmt.Errorf("dlq declare %s: %w", qc.DLQName, err)
 		}
 
 		// Bind DLQ to DLX
 		err = r.channel.QueueBind(
-			qb.DLQName,
-			qb.DLQRoutingKey,
+			qc.DLQName,
+			qc.DLQRoutingKey,
 			DLXExchangeName,
 			false,
 			nil,
 		)
 		if err != nil {
-			return fmt.Errorf("dlq bind %s: %w", qb.DLQName, err)
+			return fmt.Errorf("dlq bind %s: %w", qc.DLQName, err)
 		}
 
 		// Declare main queue with DLX configuration
 		_, err = r.channel.QueueDeclare(
-			qb.QueueName,
+			qc.QueueName,
 			true,  // durable
 			false, // delete when unused
 			false, // exclusive
 			false, // no-wait
 			amqp.Table{
 				"x-dead-letter-exchange":    DLXExchangeName,
-				"x-dead-letter-routing-key": qb.DLQRoutingKey,
+				"x-dead-letter-routing-key": qc.DLQRoutingKey,
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("queue declare %s: %w", qb.QueueName, err)
+			return fmt.Errorf("queue declare %s: %w", qc.QueueName, err)
 		}
 
-		// Bind main queue to exchange
+		// Bind main queue to main exchange
 		err = r.channel.QueueBind(
-			qb.QueueName,
-			qb.RoutingKey,
+			qc.QueueName,
+			qc.RoutingKey,
 			ExchangeName,
 			false,
 			nil,
 		)
 		if err != nil {
-			return fmt.Errorf("bind %s->%s: %w", qb.QueueName, qb.RoutingKey, err)
+			return fmt.Errorf("bind %s->%s: %w", qc.QueueName, qc.RoutingKey, err)
 		}
 	}
 
-	log.Println("rabbitmq: connected")
+	log.Println("rabbitmq: connected with DLQ configuration")
 	return nil
 }
 
@@ -227,53 +218,6 @@ func (r *RabbitMQ) handleReconnect() {
 	}
 }
 
-func (r *RabbitMQ) publish(routingKey string, message interface{}) error {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	if r.channel == nil {
-		return fmt.Errorf("channel not available")
-	}
-
-	body, err := json.Marshal(message)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
-	defer cancel()
-
-	err = r.channel.PublishWithContext(
-		ctx,
-		ExchangeName,
-		routingKey,
-		false,
-		false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			Body:         body,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("publish: %w", err)
-	}
-
-	return nil
-}
-
-func (r *RabbitMQ) PublishStatusUpdate(msg StatusUpdateMessage) error {
-	return r.publish(RoutingKeyStatusUpdate, msg)
-}
-
-func (r *RabbitMQ) PublishReportCreated(msg ReportCreatedMessage) error {
-	return r.publish(RoutingKeyReportCreated, msg)
-}
-
-func (r *RabbitMQ) PublishVoteReceived(msg VoteReceivedMessage) error {
-	return r.publish(RoutingKeyVoteReceived, msg)
-}
-
 func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -285,7 +229,7 @@ func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) 
 	msgs, err := r.channel.Consume(
 		queueName,
 		"",    // consumer tag (auto-generated)
-		false, // auto-ack
+		false, // auto-ack (manual for retry support)
 		false, // exclusive
 		false, // no-local
 		false, // no-wait
@@ -296,6 +240,12 @@ func (r *RabbitMQ) ConsumeQueue(queueName string) (<-chan amqp.Delivery, error) 
 	}
 
 	return msgs, nil
+}
+
+func (r *RabbitMQ) GetChannel() *amqp.Channel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.channel
 }
 
 func (r *RabbitMQ) Close() {
