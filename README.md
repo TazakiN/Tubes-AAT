@@ -266,3 +266,11 @@ docker-compose logs -f auth-service
 ## License
 
 Educational Project - Tugas Kuliah AAT 2024
+
+## Declaration of LLM Usage
+
+- Pembuatan scripts untuk load testing
+- Pembuatan README untuk how to setup dan how to run
+- Bantuan debugging masalah notifikasi
+- Penjelasan arsitektur ke dalam kata-kata di laporan
+- Bantuan debugging RabbitMQ tidak tersambung ke report service
