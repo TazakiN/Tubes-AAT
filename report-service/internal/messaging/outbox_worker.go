@@ -87,7 +87,7 @@ func (w *OutboxWorker) processPendingMessages() {
 	}
 }
 
-// publishWithConfirm publishes a message with publisher confirms
+// publishWithConfirm publishes a message (simple version without per-message confirms)
 func (w *OutboxWorker) publishWithConfirm(routingKey string, payload json.RawMessage) error {
 	w.rmq.mu.RLock()
 	defer w.rmq.mu.RUnlock()
@@ -95,13 +95,6 @@ func (w *OutboxWorker) publishWithConfirm(routingKey string, payload json.RawMes
 	if w.rmq.channel == nil {
 		return fmt.Errorf("channel not available")
 	}
-
-	// Enable publisher confirms
-	if err := w.rmq.channel.Confirm(false); err != nil {
-		return fmt.Errorf("confirm mode: %w", err)
-	}
-
-	confirms := w.rmq.channel.NotifyPublish(make(chan amqp.Confirmation, 1))
 
 	ctx, cancel := context.WithTimeout(context.Background(), publishTimeout)
 	defer cancel()
@@ -123,16 +116,7 @@ func (w *OutboxWorker) publishWithConfirm(routingKey string, payload json.RawMes
 		return fmt.Errorf("publish: %w", err)
 	}
 
-	// Wait for confirmation
-	select {
-	case confirm := <-confirms:
-		if !confirm.Ack {
-			return fmt.Errorf("message not acknowledged by RabbitMQ")
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("publish confirmation timeout")
-	}
+	return nil
 }
 
 // cleanupLoop periodically cleans up old published messages
