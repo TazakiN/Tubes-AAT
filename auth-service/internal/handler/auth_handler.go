@@ -98,11 +98,24 @@ func (h *AuthHandler) Validate(c *gin.Context) {
 }
 
 func (h *AuthHandler) Me(c *gin.Context) {
-	// Get user ID from header (set by Nginx after validation)
+	// Try to get user ID from header (set by Nginx after validation)
 	userIDStr := c.GetHeader("X-User-ID")
+
+	// If not from header, try to parse from JWT token
 	if userIDStr == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := h.authService.ValidateToken(tokenStr)
+		if err != nil || !claims.Valid {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		userIDStr = claims.UserID
 	}
 
 	userID, err := uuid.Parse(userIDStr)
